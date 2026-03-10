@@ -283,6 +283,31 @@
             background: var(--surface2);
         }
 
+        .metric-toggle {
+            display: flex;
+            gap: 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            margin-left: 8px;
+        }
+        .metric-btn {
+            padding: 6px 14px;
+            border: none;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 13px;
+            font-family: 'Inter', sans-serif;
+            font-weight: 500;
+            transition: background .2s, color .2s;
+        }
+        .metric-btn:hover { background: var(--surface2); }
+        .metric-btn.active {
+            background: var(--accent);
+            color: #fff;
+        }
+
         .role-badge {
             padding: 4px 10px;
             border-radius: 20px;
@@ -341,7 +366,7 @@
         /* KPI CARDS */
         .kpi-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            grid-template-columns: repeat(5, 1fr);
             gap: 16px;
             margin-bottom: 28px;
         }
@@ -433,6 +458,10 @@
 
         .kpi-amber {
             --kpi-color: var(--amber);
+        }
+
+        .kpi-primary {
+            --kpi-color: var(--primary);
         }
 
         /* CHARTS GRID */
@@ -563,13 +592,6 @@
                     <polyline points="18,17 13,12 9,16 5,10" />
                 </svg>
                 Distribución
-            </a>
-            <a class="nav-item" href="/dashboard#sec-incomp">
-                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <circle cx="11" cy="11" r="8" />
-                    <path d="M21 21l-4.35-4.35" />
-                </svg>
-                Incompatibilidades
             </a>
         </nav>
         <div class="sidebar-footer">

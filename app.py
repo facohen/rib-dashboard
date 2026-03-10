@@ -34,7 +34,7 @@ app.secret_key = "rub-dashboard-secret-2026-change-in-prod"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 CHATBOT_MODEL = os.environ.get("CHATBOT_MODEL", "qwen2.5-coder:7b")
 
-SQL_GEN_PROMPT = """Solo SELECT PostgreSQL. Solo la query, sin explicacion, sin backticks. LIMIT 100. Si no podes, responde NO_SQL.
+SQL_GEN_PROMPT = """Generador SQL para PostgreSQL. Responde UNICAMENTE con una query SELECT. Sin explicacion, sin backticks, sin markdown. LIMIT 100 siempre. Si no podes generar SQL, responde exactamente: NO_SQL
 
 TABLAS:
 beneficiaries(id,cuil,nombre,apellido,sexo,fecha_nacimiento,provincia,departamento)
@@ -47,15 +47,17 @@ REGLAS: estado_beneficio='ACTIVO', periodo_mes='2026-03', contar=COUNT(DISTINCT 
 
 EJ:
 total: SELECT COUNT(DISTINCT beneficiary_id) FROM benefits WHERE estado_beneficio='ACTIVO' AND periodo_mes='2026-03'
-x_prog: SELECT p.nombre_programa,COUNT(DISTINCT b.beneficiary_id) n FROM benefits b JOIN programs p ON p.id=b.program_id WHERE b.estado_beneficio='ACTIVO' GROUP BY 1 ORDER BY n DESC LIMIT 100
-x_prov: SELECT ben.provincia,COUNT(DISTINCT b.beneficiary_id) n FROM benefits b JOIN beneficiaries ben ON ben.id=b.beneficiary_id WHERE b.estado_beneficio='ACTIVO' GROUP BY 1 ORDER BY n DESC LIMIT 100
+x_prog: SELECT p.nombre_programa,COUNT(DISTINCT b.beneficiary_id) n FROM benefits b JOIN programs p ON p.id=b.program_id WHERE b.estado_beneficio='ACTIVO' AND b.periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC LIMIT 100
+x_prov: SELECT ben.provincia,COUNT(DISTINCT b.beneficiary_id) n FROM benefits b JOIN beneficiaries ben ON ben.id=b.beneficiary_id WHERE b.estado_beneficio='ACTIVO' AND b.periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC LIMIT 100
 montos: SELECT p.nombre_programa,SUM(pay.monto_prestacion) FROM payments pay JOIN programs p ON p.id=pay.program_id WHERE pay.periodo_mes='2026-03' GROUP BY 1 ORDER BY 2 DESC LIMIT 100
 multi: SELECT COUNT(*) FROM (SELECT beneficiary_id FROM benefits WHERE estado_beneficio='ACTIVO' AND periodo_mes='2026-03' GROUP BY 1 HAVING COUNT(DISTINCT program_id)>1) s
+crosstab: SELECT ben.provincia,SUM(CASE WHEN ben.sexo='F' THEN 1 ELSE 0 END) femenino,SUM(CASE WHEN ben.sexo='M' THEN 1 ELSE 0 END) masculino,SUM(CASE WHEN ben.sexo='X' THEN 1 ELSE 0 END) no_binario,COUNT(DISTINCT b.beneficiary_id) total FROM benefits b JOIN beneficiaries ben ON ben.id=b.beneficiary_id WHERE b.estado_beneficio='ACTIVO' AND b.periodo_mes='2026-03' GROUP BY 1 ORDER BY total DESC LIMIT 10
+
+IMPORTANTE: Cuando pidan desglose por sexo, programa u otra dimension dentro de un ranking (ej "top provincias por sexo"), usa SUM(CASE WHEN ... THEN 1 ELSE 0 END) para pivotar columnas. NO uses GROUP BY con dos dimensiones + LIMIT porque trunca combinaciones.
 """
 
-ANSWER_PROMPT = """Responde en espanol usando SOLO los datos recibidos. No inventes datos.
-Formato markdown: tablas con | y --- para datos tabulares, **negrita** para numeros clave.
-Montos en pesos con separador de miles. Se breve."""
+NO_SQL_RESPONSE = "Soy un modelo de IA para contestar preguntas sobre el RUB."
+NO_DATA_RESPONSE = "No se encontraron datos para esa consulta."
 
 # ──────────────────────────────────────────────
 # DB helpers
@@ -213,177 +215,175 @@ def api_chatbot_ask():
     import time
     t0 = time.time()
     print(f"\n{'='*60}")
-    print(f"[CHATBOT] {time.strftime('%H:%M:%S')} Nueva consulta")
-    print(f"[CHATBOT] Pregunta: {user_msg}")
-    print(f"[CHATBOT] Modelo: {CHATBOT_MODEL}")
-    print(f"[CHATBOT] Ollama URL: {OLLAMA_URL}")
-    print(f"[CHATBOT] Historial: {len(history)} mensajes previos")
-    print(f"[CHATBOT] Prompt sistema: {len(SQL_GEN_PROMPT)} chars")
-    print(f"[CHATBOT] Fase 1: Generando SQL...")
+    print(f"[CHATBOT] {time.strftime('%H:%M:%S')} Nueva consulta: {user_msg}")
 
-    # Fase 1: Generar SQL
+    # ── Fase 1: Generar SQL (sin historial, modelo chico se confunde) ──
     sql_messages = [
         {"role": "system", "content": SQL_GEN_PROMPT},
         {"role": "user", "content": user_msg}
     ]
-    payload = {"model": CHATBOT_MODEL, "messages": sql_messages, "stream": False,
-                "options": {"num_predict": 200, "temperature": 0}}
-    print(f"[CHATBOT]   POST {OLLAMA_URL}/api/chat (stream=False, timeout=120)")
-    print(f"[CHATBOT]   Payload size: {len(json_mod.dumps(payload))} bytes")
+
+    sql_clean, sql_error = _call_ollama_sql(sql_messages, t0)
+    if sql_clean is None and sql_error:
+        return jsonify(error=sql_error), 502
+
+    # Si no genero SQL valido, responder mensaje fijo
+    if sql_clean is None:
+        print(f"[CHATBOT] No es SQL -> respuesta fija")
+        return _direct_response(NO_SQL_RESPONSE, "", "", 0)
+
+    # ── Fase 2: Ejecutar SQL (read-only) ──
+    sql_result, sql_error = _execute_sql_readonly(sql_clean)
+
+    # ── Fase 2b: Retry si hubo error SQL (1 intento) ──
+    if sql_error:
+        print(f"[CHATBOT] SQL error, reintentando con feedback...")
+        retry_messages = sql_messages + [
+            {"role": "assistant", "content": sql_clean},
+            {"role": "user", "content": f"Esa query dio error: {sql_error}\nCorregila. Solo la query SQL corregida, nada mas."}
+        ]
+        sql_clean_retry, retry_err = _call_ollama_sql(retry_messages, time.time())
+        if sql_clean_retry:
+            print(f"[CHATBOT] Retry SQL: {sql_clean_retry[:200]}")
+            sql_result, sql_error = _execute_sql_readonly(sql_clean_retry)
+            if not sql_error:
+                sql_clean = sql_clean_retry
+
+    # ── Fase 3: Formatear respuesta en Python (sin segunda llamada a Ollama) ──
+    elapsed = time.time() - t0
+    print(f"[CHATBOT] Formateando respuesta ({elapsed:.1f}s acumulado)")
+
+    if sql_error:
+        answer = f"Error al consultar los datos: {sql_error}"
+    elif not sql_result or not sql_result["rows"]:
+        answer = NO_DATA_RESPONSE
+    else:
+        answer = _format_sql_result(user_msg, sql_result)
+
+    print(f"[CHATBOT] COMPLETADO en {time.time()-t0:.1f}s")
+    print(f"{'='*60}")
+    return _direct_response(answer, sql_clean or "", sql_error or "",
+                            sql_result["row_count"] if sql_result else 0)
+
+
+def _call_ollama_sql(messages, t0):
+    """Llama a Ollama para generar SQL. Retorna (sql_clean, error)."""
+    import time
+    payload = {"model": CHATBOT_MODEL, "messages": messages, "stream": False,
+               "options": {"num_predict": 300, "temperature": 0}}
     try:
-        resp = http_requests.post(f"{OLLAMA_URL}/api/chat",
-            json=payload, timeout=120)
-        print(f"[CHATBOT]   HTTP {resp.status_code} en {time.time()-t0:.1f}s")
+        resp = http_requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=120)
         resp.raise_for_status()
         raw_resp = resp.json()
-        sql_query = raw_resp["message"]["content"].strip()
-        t1 = time.time()
-        # Metricas de Ollama
-        total_dur = raw_resp.get("total_duration", 0) / 1e9
-        load_dur = raw_resp.get("load_duration", 0) / 1e9
-        prompt_eval_count = raw_resp.get("prompt_eval_count", 0)
-        prompt_eval_dur = raw_resp.get("prompt_eval_duration", 0) / 1e9
+        sql_raw = raw_resp["message"]["content"].strip()
+
         eval_count = raw_resp.get("eval_count", 0)
         eval_dur = raw_resp.get("eval_duration", 0) / 1e9
         tps = eval_count / eval_dur if eval_dur > 0 else 0
-        prompt_tps = prompt_eval_count / prompt_eval_dur if prompt_eval_dur > 0 else 0
-        print(f"[CHATBOT] Fase 1 COMPLETADA en {t1-t0:.1f}s")
-        print(f"[CHATBOT]   Ollama total: {total_dur:.1f}s")
-        print(f"[CHATBOT]   Model load: {load_dur:.1f}s")
-        print(f"[CHATBOT]   Prompt eval: {prompt_eval_count} tokens en {prompt_eval_dur:.1f}s ({prompt_tps:.1f} tok/s)")
-        print(f"[CHATBOT]   Generation: {eval_count} tokens en {eval_dur:.1f}s ({tps:.1f} tok/s)")
-        print(f"[CHATBOT]   SQL raw ({len(sql_query)} chars): {sql_query[:500]}")
-    except http_requests.ConnectionError as e:
-        print(f"[CHATBOT] ERROR CONEXION: {e}")
-        return jsonify(error="No se pudo conectar con Ollama. Verifica que este ejecutandose."), 502
-    except http_requests.Timeout as e:
-        elapsed = time.time() - t0
-        print(f"[CHATBOT] ERROR TIMEOUT despues de {elapsed:.1f}s: {e}")
-        return jsonify(error=f"Ollama tardo demasiado ({elapsed:.0f}s). El modelo puede ser muy pesado para CPU."), 504
+        print(f"[CHATBOT] SQL generado en {time.time()-t0:.1f}s ({eval_count} tok, {tps:.1f} tok/s)")
+        print(f"[CHATBOT]   Raw: {sql_raw[:300]}")
+
+        # Limpiar backticks/markdown
+        sql_clean = sql_raw.strip().strip("`").strip()
+        if sql_clean.startswith("```"):
+            sql_clean = sql_clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+        if sql_clean.upper().startswith("NO_SQL") or not sql_clean.upper().lstrip().startswith("SELECT"):
+            return None, None  # No es SQL, no es error
+
+        return sql_clean, None
+
+    except http_requests.ConnectionError:
+        return None, "No se pudo conectar con Ollama. Verifica que este ejecutandose."
+    except http_requests.Timeout:
+        return None, f"Ollama tardo demasiado (timeout 120s)."
     except Exception as e:
-        elapsed = time.time() - t0
-        print(f"[CHATBOT] ERROR {type(e).__name__} despues de {elapsed:.1f}s: {e}")
-        return jsonify(error=f"Error con Ollama: {e}"), 502
+        return None, f"Error con Ollama: {e}"
 
-    # Si el modelo no genero SQL valido, responder sin datos
-    sql_clean = sql_query.strip().strip("`").strip()
-    if sql_clean.startswith("```"):
-        sql_clean = sql_clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    if sql_clean.upper().startswith("NO_SQL") or not sql_clean.upper().lstrip().startswith("SELECT"):
-        print(f"[CHATBOT] No es SQL valido -> respondiendo sin datos")
-        print(f"[CHATBOT]   Contenido: {sql_query[:200]}")
-        return _stream_answer(user_msg, history, None, None)
 
-    print(f"[CHATBOT] SQL limpio: {sql_clean[:300]}")
-
-    # Ejecutar SQL (solo SELECT)
-    print(f"[CHATBOT] Fase 2: Ejecutando SQL en PostgreSQL...")
-    sql_result = None
-    sql_error = None
+def _execute_sql_readonly(sql_clean):
+    """Ejecuta SQL en modo read-only. Retorna (result_dict, error_str)."""
+    import time
+    print(f"[CHATBOT] Ejecutando SQL: {sql_clean[:200]}")
+    t_sql = time.time()
     try:
         conn = get_db()
         cur = conn.cursor()
-        t_sql = time.time()
+        cur.execute("SET TRANSACTION READ ONLY")
         cur.execute(sql_clean)
         columns = [desc[0] for desc in cur.description] if cur.description else []
         rows = cur.fetchmany(100)
-        sql_result = {"columns": columns,
-                      "rows": [dict(zip(columns, row)) for row in rows],
-                      "row_count": len(rows)}
-        t2 = time.time()
-        print(f"[CHATBOT] Fase 2 COMPLETADA en {t2-t_sql:.3f}s")
-        print(f"[CHATBOT]   Resultado: {len(rows)} filas, {len(columns)} columnas")
-        if columns:
-            print(f"[CHATBOT]   Columnas: {columns}")
-        if rows:
-            print(f"[CHATBOT]   Primera fila: {dict(zip(columns, rows[0]))}")
-        if len(rows) >= 100:
-            print(f"[CHATBOT]   WARN: resultado truncado a 100 filas")
+        result = {"columns": columns,
+                  "rows": [dict(zip(columns, row)) for row in rows],
+                  "row_count": len(rows)}
+        conn.commit()
+        print(f"[CHATBOT] SQL OK en {time.time()-t_sql:.3f}s: {len(rows)} filas")
+        return result, None
     except Exception as e:
-        sql_error = str(e)
-        t2 = time.time()
-        print(f"[CHATBOT] Fase 2 SQL ERROR: {sql_error}")
+        err = str(e)
+        print(f"[CHATBOT] SQL ERROR: {err}")
         try:
             conn.rollback()
         except Exception:
             pass
-
-    total_so_far = time.time() - t0
-    print(f"[CHATBOT] Fase 3: Streaming respuesta... (tiempo acumulado: {total_so_far:.1f}s)")
-    return _stream_answer(user_msg, history, sql_clean, sql_result, sql_error)
+        return None, err
 
 
-def _stream_answer(user_msg, history, sql_query, sql_result, sql_error=None):
-    import time
-    context_parts = []
-    if sql_result and sql_result["rows"]:
-        context_parts.append(f"\nDATOS (resultado de la query SQL):\n"
-                             f"{json_mod.dumps(sql_result, ensure_ascii=False, default=str)}")
-    elif sql_error:
-        context_parts.append(f"\nError ejecutando la query SQL: {sql_error}")
+def _format_sql_result(user_msg, sql_result):
+    """Formatea el resultado SQL como markdown (sin LLM)."""
+    columns = sql_result["columns"]
+    rows = sql_result["rows"]
 
-    full_user_msg = user_msg
-    if context_parts:
-        full_user_msg += "\n".join(context_parts)
+    # Caso simple: 1 fila, 1 columna (ej: COUNT)
+    if len(rows) == 1 and len(columns) == 1:
+        val = rows[0][columns[0]]
+        return f"**{_fmt_value(val)}**"
 
-    messages = [{"role": "system", "content": ANSWER_PROMPT}]
-    for h in history[-10:]:
-        messages.append({"role": h.get("role", "user"), "content": h.get("content", "")})
-    messages.append({"role": "user", "content": full_user_msg})
+    # Caso simple: 1 fila, pocas columnas
+    if len(rows) == 1 and len(columns) <= 4:
+        parts = []
+        for col in columns:
+            parts.append(f"**{col}**: {_fmt_value(rows[0][col])}")
+        return " | ".join(parts)
 
-    payload_size = len(json_mod.dumps(messages, ensure_ascii=False, default=str))
-    print(f"[CHATBOT-STREAM] Preparando respuesta")
-    print(f"[CHATBOT-STREAM]   Mensajes: {len(messages)} ({payload_size} bytes)")
-    print(f"[CHATBOT-STREAM]   SQL incluido: {'si' if sql_query else 'no'}")
-    print(f"[CHATBOT-STREAM]   Datos incluidos: {'si' if sql_result and sql_result['rows'] else 'no'}")
-    print(f"[CHATBOT-STREAM]   Error SQL: {sql_error if sql_error else 'ninguno'}")
+    # Tabla markdown
+    header = "| " + " | ".join(columns) + " |"
+    separator = "| " + " | ".join("---" for _ in columns) + " |"
+    lines = [header, separator]
+    for row in rows:
+        cells = []
+        for col in columns:
+            cells.append(_fmt_value(row[col]))
+        lines.append("| " + " | ".join(cells) + " |")
 
+    return "\n".join(lines)
+
+
+def _fmt_value(val):
+    """Formatea un valor para display."""
+    if val is None:
+        return "-"
+    if isinstance(val, (int, float, Decimal)):
+        if isinstance(val, float) and val == int(val):
+            val = int(val)
+        if isinstance(val, (int,)) and abs(val) >= 1000:
+            return f"{val:,.0f}".replace(",", ".")
+        if isinstance(val, (float, Decimal)) and abs(val) >= 1000:
+            return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return str(val)
+    return str(val)
+
+
+def _direct_response(answer, sql_query, sql_error, row_count):
+    """Retorna respuesta directa como stream NDJSON (compatible con frontend)."""
     def generate():
         yield json_mod.dumps({"type": "meta",
-                               "sql": sql_query or "",
-                               "sql_error": sql_error or "",
-                               "row_count": sql_result["row_count"] if sql_result else 0}) + "\n"
-        t_stream = time.time()
-        token_count = 0
-        try:
-            print(f"[CHATBOT-STREAM] POST {OLLAMA_URL}/api/chat (stream=True, timeout=120)")
-            resp = http_requests.post(f"{OLLAMA_URL}/api/chat",
-                json={"model": CHATBOT_MODEL, "messages": messages, "stream": True,
-                      "options": {"num_predict": 500, "temperature": 0}},
-                stream=True, timeout=180)
-            print(f"[CHATBOT-STREAM] HTTP {resp.status_code}")
-            resp.raise_for_status()
-            first_token_time = None
-            for line in resp.iter_lines():
-                if line:
-                    chunk = json_mod.loads(line)
-                    token = chunk.get("message", {}).get("content", "")
-                    done = chunk.get("done", False)
-                    if token and first_token_time is None:
-                        first_token_time = time.time()
-                        print(f"[CHATBOT-STREAM] Primer token en {first_token_time - t_stream:.1f}s")
-                    token_count += 1
-                    yield json_mod.dumps({"type": "token", "content": token, "done": done}) + "\n"
-                    if done:
-                        elapsed = time.time() - t_stream
-                        # Ollama final stats
-                        eval_count = chunk.get("eval_count", token_count)
-                        eval_dur = chunk.get("eval_duration", 0) / 1e9
-                        tps = eval_count / eval_dur if eval_dur > 0 else 0
-                        print(f"[CHATBOT-STREAM] COMPLETADO en {elapsed:.1f}s")
-                        print(f"[CHATBOT-STREAM]   Tokens: {eval_count} ({tps:.1f} tok/s)")
-                        print(f"{'='*60}")
-        except http_requests.ConnectionError as e:
-            print(f"[CHATBOT-STREAM] ERROR CONEXION: {e}")
-            yield json_mod.dumps({"type": "error",
-                                   "content": "No se pudo conectar con Ollama"}) + "\n"
-        except http_requests.Timeout as e:
-            print(f"[CHATBOT-STREAM] ERROR TIMEOUT: {e}")
-            yield json_mod.dumps({"type": "error",
-                                   "content": "Ollama tardo demasiado generando la respuesta"}) + "\n"
-        except Exception as e:
-            print(f"[CHATBOT-STREAM] ERROR {type(e).__name__}: {e}")
-            yield json_mod.dumps({"type": "error", "content": str(e)}) + "\n"
+                               "sql": sql_query,
+                               "sql_error": sql_error,
+                               "row_count": row_count}) + "\n"
+        # Enviar toda la respuesta como tokens para compatibilidad con el frontend
+        yield json_mod.dumps({"type": "token", "content": answer, "done": False}) + "\n"
+        yield json_mod.dumps({"type": "token", "content": "", "done": True}) + "\n"
 
     return Response(generate(), mimetype="application/x-ndjson")
 
@@ -412,13 +412,15 @@ def api_summary():
 @login_required
 def api_by_secretaria():
     period = request.args.get("period", "2026-03")
-    return jsonify(queries.get_by_secretaria(get_db(), period, _get_chart_filters()))
+    metric = request.args.get("metric", "beneficiarios")
+    return jsonify(queries.get_by_secretaria(get_db(), period, _get_chart_filters(), metric))
 
 @app.route("/api/indicators/by-provincia")
 @login_required
 def api_by_provincia():
     period = request.args.get("period", "2026-03")
-    return jsonify(queries.get_by_provincia(get_db(), period, _get_chart_filters()))
+    metric = request.args.get("metric", "beneficiarios")
+    return jsonify(queries.get_by_provincia(get_db(), period, _get_chart_filters(), metric))
 
 @app.route("/api/indicators/by-departamento")
 @login_required
@@ -430,24 +432,28 @@ def api_by_departamento():
 @login_required
 def api_by_programa():
     period = request.args.get("period", "2026-03")
-    return jsonify(queries.get_by_programa(get_db(), period, _get_chart_filters()))
+    metric = request.args.get("metric", "beneficiarios")
+    return jsonify(queries.get_by_programa(get_db(), period, _get_chart_filters(), metric))
 
 @app.route("/api/indicators/by-sexo")
 @login_required
 def api_by_sexo():
     period = request.args.get("period", "2026-03")
-    return jsonify(queries.get_by_sexo(get_db(), period, _get_chart_filters()))
+    metric = request.args.get("metric", "beneficiarios")
+    return jsonify(queries.get_by_sexo(get_db(), period, _get_chart_filters(), metric))
 
 @app.route("/api/indicators/by-grupo-etario")
 @login_required
 def api_by_grupo_etario():
     period = request.args.get("period", "2026-03")
-    return jsonify(queries.get_by_grupo_etario(get_db(), period, _get_chart_filters()))
+    metric = request.args.get("metric", "beneficiarios")
+    return jsonify(queries.get_by_grupo_etario(get_db(), period, _get_chart_filters(), metric))
 
 @app.route("/api/indicators/evolucion")
 @login_required
 def api_evolucion():
-    return jsonify(queries.get_evolucion(get_db(), _get_chart_filters()))
+    metric = request.args.get("metric", "beneficiarios")
+    return jsonify(queries.get_evolucion(get_db(), _get_chart_filters(), metric))
 
 # ──────────────────────────────────────────────
 # API: Nominal (admin only)
@@ -483,7 +489,7 @@ def api_nominal_detail(bid):
 # ──────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("\n🚀 RUB Dashboard corriendo en http://localhost:5000")
+    print("\n>> RUB Dashboard corriendo en http://localhost:5000")
     print("   Requiere DATABASE_URL con PostgreSQL")
     print("   admin@demo.local / Demo123!")
     print("   user@demo.local  / Demo123!\n")

@@ -8,6 +8,16 @@ from datetime import date
 from config import query, query_one
 
 
+def _metric_expr(metric):
+    """Return (select_expr, extra_join) for the given metric mode."""
+    if metric == "montos":
+        return (
+            "COALESCE(SUM(pay.monto_prestacion),0)",
+            "JOIN payments pay ON pay.beneficiary_id=b.beneficiary_id AND pay.program_id=b.program_id AND pay.periodo_mes=b.periodo_mes"
+        )
+    return ("COUNT(DISTINCT b.beneficiary_id)", "")
+
+
 def _corte_date(period):
     y, m = int(period[:4]), int(period[5:7])
     last = calendar.monthrange(y, m)[1]
@@ -229,6 +239,15 @@ def get_summary(conn, period, filters=None):
     con2 = (conc_row["con_dos"] or 0) if conc_row else 0
     con3 = (conc_row["con_tres_mas"] or 0) if conc_row else 0
 
+    # Cantidad de programas activos
+    prog_row = query_one(conn, f"""
+        SELECT COUNT(DISTINCT b.program_id) as total
+        FROM benefits b {fj_bp}
+        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO' AND b.beneficiary_id IS NOT NULL
+        {extra_where_bp}
+    """, [period] + fp_bp)
+    cant_programas = prog_row["total"] if prog_row else 0
+
     return {
         "period": period,
         "cobertura": cobertura,
@@ -237,30 +256,33 @@ def get_summary(conn, period, filters=None):
         "montoTotal": round(monto_total),
         "tasaNoIdentificados": tasa_no_ident,
         "casosIncompatibilidad": incomp,
+        "cantidadProgramas": cant_programas,
         "concentracion": {"conUna": con1, "conDos": con2, "conTresMas": con3},
     }
 
 
-def get_by_secretaria(conn, period, filters=None):
+def get_by_secretaria(conn, period, filters=None, metric="beneficiarios"):
     corte = _corte_date(period)
+    sel, pay_join = _metric_expr(metric)
     fj, fw, fp = _apply_filters(filters, corte, has_ben=False, has_prog=True)
     extra = (" AND " + " AND ".join(fw)) if fw else ""
     return query(conn, f"""
-        SELECT p.secretaria_origen as secretaria, COUNT(DISTINCT b.cuil_raw) as total
-        FROM benefits b JOIN programs p ON b.program_id=p.id {fj}
+        SELECT p.secretaria_origen as secretaria, {sel} as total
+        FROM benefits b JOIN programs p ON b.program_id=p.id {pay_join} {fj}
         WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO' AND b.cuil_raw IS NOT NULL
         {extra}
         GROUP BY p.secretaria_origen ORDER BY total DESC
     """, [period] + fp)
 
 
-def get_by_provincia(conn, period, filters=None):
+def get_by_provincia(conn, period, filters=None, metric="beneficiarios"):
     corte = _corte_date(period)
+    sel, pay_join = _metric_expr(metric)
     fj, fw, fp = _apply_filters(filters, corte, has_ben=True, has_prog=False)
     extra = (" AND " + " AND ".join(fw)) if fw else ""
     return query(conn, f"""
-        SELECT ben.provincia, COUNT(DISTINCT b.beneficiary_id) as total
-        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {fj}
+        SELECT ben.provincia, {sel} as total
+        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {pay_join} {fj}
         WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO'
         {extra}
         GROUP BY ben.provincia ORDER BY total DESC
@@ -281,56 +303,82 @@ def get_by_departamento(conn, period, filters=None):
     return [{**r, "label": f"{r['departamento']}, {r['provincia']}"} for r in rows]
 
 
-def get_by_programa(conn, period, filters=None):
+def get_by_programa(conn, period, filters=None, metric="beneficiarios"):
     corte = _corte_date(period)
+    sel, pay_join = _metric_expr(metric)
     fj, fw, fp = _apply_filters(filters, corte, has_ben=False, has_prog=True)
     extra = (" AND " + " AND ".join(fw)) if fw else ""
     return query(conn, f"""
-        SELECT p.nombre_programa as programa, COUNT(DISTINCT b.beneficiary_id) as total
-        FROM benefits b JOIN programs p ON b.program_id=p.id {fj}
+        SELECT p.nombre_programa as programa, {sel} as total
+        FROM benefits b JOIN programs p ON b.program_id=p.id {pay_join} {fj}
         WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO' AND b.beneficiary_id IS NOT NULL
         {extra}
         GROUP BY p.nombre_programa ORDER BY total DESC
     """, [period] + fp)
 
 
-def get_by_sexo(conn, period, filters=None):
+def get_by_sexo(conn, period, filters=None, metric="beneficiarios"):
     corte = _corte_date(period)
+    sel, pay_join = _metric_expr(metric)
     fj, fw, fp = _apply_filters(filters, corte, has_ben=True, has_prog=False)
     extra = (" AND " + " AND ".join(fw)) if fw else ""
     return query(conn, f"""
         SELECT ben.sexo,
                CASE ben.sexo WHEN 'M' THEN 'Masculino' WHEN 'F' THEN 'Femenino'
                              WHEN 'X' THEN 'No binario' ELSE 'No informado' END as label,
-               COUNT(DISTINCT ben.id) as total
-        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {fj}
+               {sel} as total
+        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {pay_join} {fj}
         WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO'
         {extra}
         GROUP BY ben.sexo ORDER BY total DESC
     """, [period] + fp)
 
 
-def get_by_grupo_etario(conn, period, filters=None):
+def get_by_grupo_etario(conn, period, filters=None, metric="beneficiarios"):
     corte = _corte_date(period)
+    sel, pay_join = _metric_expr(metric)
     fj, fw, fp = _apply_filters(filters, corte, has_ben=True, has_prog=False)
     extra = (" AND " + " AND ".join(fw)) if fw else ""
     return query(conn, f"""
         SELECT
           CASE
-            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) < 13 THEN 'Niñez (0-12)'
-            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) < 30 THEN 'Jóvenes (13-29)'
-            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) < 60 THEN 'Adultos (30-59)'
-            ELSE 'Mayores (60+)'
+            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) <= 4 THEN '0-4 años'
+            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) <= 12 THEN '5-12 años'
+            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) <= 17 THEN '13-17 años'
+            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) <= 29 THEN '18-29 años'
+            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) <= 59 THEN '30-59 años'
+            ELSE '60+ años'
           END as grupo,
-          COUNT(DISTINCT ben.id) as total
-        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {fj}
+          {sel} as total
+        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {pay_join} {fj}
         WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO'
         {extra}
         GROUP BY 1 ORDER BY MIN(ben.fecha_nacimiento) DESC
-    """, [corte, corte, corte, period] + fp)
+    """, [corte, corte, corte, corte, corte, period] + fp)
 
 
-def get_evolucion(conn, filters=None):
+def get_evolucion(conn, filters=None, metric="montos"):
+    if metric == "beneficiarios":
+        if not filters:
+            return query(conn, """
+                SELECT periodo_mes, COUNT(DISTINCT beneficiary_id) as total
+                FROM benefits
+                WHERE estado_beneficio='ACTIVO' AND beneficiary_id IS NOT NULL
+                GROUP BY periodo_mes
+                ORDER BY periodo_mes ASC
+            """)
+        corte = None
+        f = {k: v for k, v in filters.items() if k != "grupo_etario"}
+        fj, fw, fp = _apply_filters(f, corte, has_ben=False, has_prog=False)
+        extra = (" AND " + " AND ".join(fw)) if fw else ""
+        return query(conn, f"""
+            SELECT b.periodo_mes, COUNT(DISTINCT b.beneficiary_id) as total
+            FROM benefits b {fj}
+            WHERE b.estado_beneficio='ACTIVO' AND b.beneficiary_id IS NOT NULL {extra}
+            GROUP BY b.periodo_mes
+            ORDER BY b.periodo_mes ASC
+        """, fp)
+    # metric == "montos" (default)
     if not filters:
         return query(conn, """
             SELECT periodo_mes, COALESCE(SUM(monto_prestacion),0) as total
@@ -338,8 +386,7 @@ def get_evolucion(conn, filters=None):
             GROUP BY periodo_mes
             ORDER BY periodo_mes ASC
         """)
-    # With filters, join through benefits to ben/programs
-    corte = None  # evolucion spans all periods, skip grupo_etario filter
+    corte = None
     f = {k: v for k, v in filters.items() if k != "grupo_etario"}
     fj, fw, fp = _apply_filters(f, corte, has_ben=False, has_prog=False)
     extra = (" AND " + " AND ".join(fw)) if fw else ""

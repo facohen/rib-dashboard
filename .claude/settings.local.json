@@ -4,7 +4,9 @@
       "Bash(powershell -Command \"\\(Get-CimInstance Win32_Service -Filter \"\"Name=''postgresql-x64-17''\"\"\\).PathName\")",
       "Bash(gh api:*)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:api.github.com)"
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:apis.datos.gob.ar)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ]
   }
 }

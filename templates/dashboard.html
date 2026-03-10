@@ -21,6 +21,11 @@
             {% endfor %}
         </select>
     </div>
+    <!-- Metric Toggle -->
+    <div class="metric-toggle" id="metricToggle">
+        <button class="metric-btn active" data-metric="beneficiarios" onclick="setMetric('beneficiarios')">Beneficiarios</button>
+        <button class="metric-btn" data-metric="montos" onclick="setMetric('montos')">Montos</button>
+    </div>
     <!-- Theme Toggle -->
     <button class="theme-btn btn-ghost" onclick="toggleTheme()" title="Cambiar Tema"
         style="margin-left:auto; margin-right: 16px; padding:6px; border-radius:50%; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; display:flex; align-items:center; justify-content:center; width:34px; height:34px;">
@@ -34,103 +39,87 @@
     <div id="filterBadges" style="display:none; flex-wrap:wrap; gap:8px; margin-bottom:12px; align-items:center;"></div>
 
     <!-- KPI CARDS -->
-    <div id="sec-cobertura"></div>
     <div class="kpi-grid" id="kpiGrid">
         <div class="kpi-card kpi-success">
             <div class="kpi-icon">👥</div>
-            <div class="kpi-label">I-01 Cobertura</div>
+            <div class="kpi-label">Beneficiarios únicos</div>
             <div class="kpi-value" id="kpi-cobertura">—</div>
-            <div class="kpi-sub">Beneficiarios únicos activos</div>
+            <div class="kpi-sub">Activos en el período</div>
+        </div>
+        <div class="kpi-card kpi-amber">
+            <div class="kpi-icon">💵</div>
+            <div class="kpi-label">Monto total</div>
+            <div class="kpi-value" id="kpi-monto-total">—</div>
+            <div class="kpi-sub">Liquidado en el período</div>
         </div>
         <div class="kpi-card">
             <div class="kpi-icon">📊</div>
-            <div class="kpi-label">I-08 Prom. Prestaciones</div>
+            <div class="kpi-label">Prom. prestaciones</div>
             <div class="kpi-value" id="kpi-prom-prest">—</div>
             <div class="kpi-sub">Por beneficiario activo</div>
         </div>
         <div class="kpi-card kpi-purple">
             <div class="kpi-icon">💰</div>
-            <div class="kpi-label">I-09 Monto Promedio</div>
+            <div class="kpi-label">Monto promedio</div>
             <div class="kpi-value" id="kpi-prom-monto">—</div>
             <div class="kpi-sub">Por beneficiario</div>
         </div>
-        <div class="kpi-card kpi-amber">
-            <div class="kpi-icon">💵</div>
-            <div class="kpi-label">I-10 Monto Total</div>
-            <div class="kpi-value" id="kpi-monto-total">—</div>
-            <div class="kpi-sub">Liquidado en el período</div>
-        </div>
-        <div class="kpi-card kpi-alert">
-            <div class="kpi-icon">⚠️</div>
-            <div class="kpi-label">I-14 No Identificados</div>
-            <div class="kpi-value" id="kpi-no-ident">—</div>
-            <div class="kpi-sub">Registros sin CUIL válido</div>
-        </div>
-        <div class="kpi-card kpi-alert" id="sec-incomp">
-            <div class="kpi-icon">🚫</div>
-            <div class="kpi-label">I-15 Incompatibilidades</div>
-            <div class="kpi-value" id="kpi-incomp">—</div>
-            <div class="kpi-sub">Casos con programas incompatibles</div>
+        <div class="kpi-card kpi-primary">
+            <div class="kpi-icon">📋</div>
+            <div class="kpi-label">Programas activos</div>
+            <div class="kpi-value" id="kpi-cant-programas">—</div>
+            <div class="kpi-sub">En el período</div>
         </div>
     </div>
 
-    <!-- CHARTS ROW 1 -->
+    <!-- CHARTS -->
     <div class="charts-grid">
-        <div class="chart-card col-12">
-            <h3>I-16 Evolución de Cobertura</h3>
-            <div class="chart-sub">Histórico de crecimiento por período</div>
-            <div class="chart-wrap"><canvas id="c-evolucion" height="220"></canvas></div>
-        </div>
-        <div id="sec-distribucion"></div>
-        <!-- I-02 Secretaría -->
+        <!-- Row 1: Programa + Secretaría + Concentración -->
         <div class="chart-card col-4">
-            <h3>I-02 Beneficiarios por Secretaría</h3>
-            <div class="chart-sub">Distribución entre secretarías de origen</div>
+            <h3>Por Programa</h3>
+            <div class="chart-sub">Distribución entre programas</div>
+            <div class="chart-wrap"><canvas id="chartPrograma" height="220"></canvas></div>
+        </div>
+        <div class="chart-card col-4">
+            <h3>Por Secretaría</h3>
+            <div class="chart-sub">Distribución entre secretarías</div>
             <div class="chart-wrap"><canvas id="chartSecretaria" height="220"></canvas></div>
         </div>
-        <!-- I-12 Sexo -->
         <div class="chart-card col-4">
-            <h3>I-12 Distribución por Sexo</h3>
-            <div class="chart-sub">Género de los beneficiarios activos</div>
-            <div class="chart-wrap"><canvas id="chartSexo" height="220"></canvas></div>
-        </div>
-        <!-- I-05/06/07 Concentración -->
-        <div class="chart-card col-4">
-            <h3>I-05/06/07 Concentración</h3>
-            <div class="chart-sub">Cantidad de prestaciones por beneficiario</div>
+            <h3>Concentración</h3>
+            <div class="chart-sub">Prestaciones por beneficiario</div>
             <div class="chart-wrap"><canvas id="chartConcentracion" height="220"></canvas></div>
         </div>
 
-        <!-- I-11 Grupo Etario -->
-        <div class="chart-card col-6">
-            <h3>I-11 Grupo Etario</h3>
-            <div class="chart-sub">Edad al corte del período seleccionado</div>
-            <div class="chart-wrap"><canvas id="chartEtario" height="200"></canvas></div>
-        </div>
-        <!-- I-13 Programa -->
-        <div class="chart-card col-6">
-            <h3>I-13 Beneficiarios por Programa</h3>
-            <div class="chart-sub">Distribución entre los 8 programas</div>
-            <div class="chart-wrap"><canvas id="chartPrograma" height="200"></canvas></div>
+        <!-- Row 2: Evolutivo -->
+        <div class="chart-card col-12">
+            <h3>Evolución</h3>
+            <div class="chart-sub">Histórico por período</div>
+            <div class="chart-wrap"><canvas id="c-evolucion" height="220"></canvas></div>
         </div>
 
-        <!-- I-03 Provincia -->
+        <!-- Row 3: Grupo Etario + Sexo -->
         <div class="chart-card col-6">
-            <h3>I-03 Distribución Provincial</h3>
-            <div class="chart-sub">Beneficiarios únicos por provincia</div>
-            <div class="chart-wrap"><canvas id="chartProvincia" height="260"></canvas></div>
+            <h3>Grupo Etario</h3>
+            <div class="chart-sub">Edad al corte del período</div>
+            <div class="chart-wrap"><canvas id="chartEtario" height="200"></canvas></div>
         </div>
-        <!-- I-04 Departamento -->
         <div class="chart-card col-6">
-            <h3>I-04 Top 10 Departamentos</h3>
-            <div class="chart-sub">Por cantidad de beneficiarios activos</div>
-            <div class="chart-wrap"><canvas id="chartDepartamento" height="260"></canvas></div>
+            <h3>Distribución por Sexo</h3>
+            <div class="chart-sub">Género de los beneficiarios</div>
+            <div class="chart-wrap"><canvas id="chartSexo" height="200"></canvas></div>
         </div>
-        <!-- I-17 Mapa Geográfico -->
-        <div class="chart-card col-12">
-            <h3>I-17 Mapa Geográfico de Beneficiarios</h3>
+
+        <!-- Row 4: Mapa + Provincia barras horizontales -->
+        <div class="chart-card col-6">
+            <h3>Mapa Geográfico</h3>
             <div class="chart-sub">Concentración por provincia</div>
-            <div id="map-argentina" style="width:100%; height:420px; border-radius:8px; z-index:1;"></div>
+            <div id="map-argentina" style="width:100%; height:720px; border-radius:8px; z-index:1;"></div>
+        </div>
+        <div class="chart-card col-6">
+            <h3>Distribución Provincial</h3>
+            <div class="chart-sub">Por provincia</div>
+            <div class="chart-wrap"><canvas id="chartProvincia" height="720"></canvas></div>
         </div>
     </div>
 </div>
@@ -143,12 +132,20 @@
 
     let period = '{{ default_period }}'
     let charts = {}
+    let globalMetric = 'beneficiarios'
+
+    function setMetric(m) {
+        globalMetric = m
+        document.querySelectorAll('.metric-btn').forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.metric === m))
+        loadAll()
+    }
 
     // ── Cross-chart filtering state ──
     let globalChartFilters = {}
 
     function filterQS(exclude) {
-        let qs = `period=${period}`
+        let qs = `period=${period}&metric=${globalMetric}`
         for (const [k, v] of Object.entries(globalChartFilters)) {
             if (k !== exclude) qs += `&${k}=${encodeURIComponent(v)}`
         }
@@ -273,20 +270,36 @@
                     tooltip: {
                         backgroundColor: isLight ? '#1f2937' : '#1a1d2a', borderColor: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)', borderWidth: 1,
                         titleColor: '#e4e6f0', bodyColor: 'rgba(255,255,255,0.7)',
-                        callbacks: opts.tooltipCb || {},
+                        callbacks: opts.tooltipCb || (type === 'doughnut' ? {
+                            label: c => {
+                                const sum = c.chart.data.datasets[0].data.reduce((a, b) => a + Number(b), 0);
+                                const pct = ((c.raw * 100) / sum).toFixed(1) + '%';
+                                const val = globalMetric === 'montos' ? fmtBig(c.raw) : c.raw.toLocaleString('es-AR');
+                                return ` ${c.label}: ${val} (${pct})`;
+                            }
+                        } : (globalMetric === 'montos' && type === 'bar' ? {
+                            label: c => c.label + ': ' + fmtBig(c.raw)
+                        } : {})),
                     },
                     datalabels: {
                         color: dlc,
                         font: { weight: 'bold', size: 11 },
                         formatter: (value, context) => {
                             if (value <= 0) return '';
+                            if (globalMetric === 'montos' && type === 'bar') return fmtBig(value);
                             const dataArr = context.chart.data.datasets[0].data;
                             const sum = dataArr.reduce((a, b) => a + Number(b), 0);
-                            return ((value * 100) / sum).toFixed(1) + '%';
+                            const pct = ((value * 100) / sum).toFixed(1) + '%';
+                            if (type === 'doughnut') {
+                                const valStr = globalMetric === 'montos' ? fmtBig(value) : value.toLocaleString('es-AR');
+                                return pct + '\n' + valStr;
+                            }
+                            return pct;
                         },
                         anchor: type === 'bar' ? 'end' : 'center',
                         align: type === 'bar' ? 'start' : 'center',
                         offset: type === 'bar' ? 4 : 0,
+                        textAlign: 'center',
                         textShadowBlur: 4,
                         textShadowColor: dls
                     }
@@ -352,11 +365,10 @@
         const r = await fetch(`/api/indicators/summary?${filterQS()}`)
         const d = await r.json()
         document.getElementById('kpi-cobertura').textContent = d.cobertura.toLocaleString('es-AR')
+        document.getElementById('kpi-monto-total').textContent = fmt(d.montoTotal)
         document.getElementById('kpi-prom-prest').textContent = d.promedioPrestaciones.toFixed(2)
         document.getElementById('kpi-prom-monto').textContent = fmt(d.promedioMontoPorBenef)
-        document.getElementById('kpi-monto-total').textContent = fmt(d.montoTotal)
-        document.getElementById('kpi-no-ident').textContent = d.tasaNoIdentificados.toFixed(1) + '%'
-        document.getElementById('kpi-incomp').textContent = d.casosIncompatibilidad.toLocaleString('es-AR')
+        document.getElementById('kpi-cant-programas').textContent = d.cantidadProgramas
         // concentración
         const c = d.concentracion
         makeChart('chartConcentracion', 'doughnut',
@@ -371,7 +383,7 @@
         const d = await r.json()
         const fullLabels = d.map(x => x.secretaria)
         const labels = fullLabels.map(s => s.replace('Secretaría de ', ''))
-        makeChart('chartSecretaria', 'doughnut', labels, d.map(x => x.total), COLORS)
+        makeChart('chartSecretaria', 'bar', labels, d.map(x => x.total), COLORS)
         if (charts['chartSecretaria']) {
             charts['chartSecretaria'].options.onClick = (evt, elements) => {
                 if (!elements.length) return
@@ -399,7 +411,7 @@
         const d = await r.json()
         const labels = d.map(x => x.grupo)
         makeChart('chartEtario', 'bar', labels, d.map(x => x.total),
-            ['#4a67ff', '#7c3aed', '#10b981', '#f59e0b'])
+            ['#06b6d4', '#4a67ff', '#7c3aed', '#10b981', '#f59e0b', '#ef4444'])
         if (charts['chartEtario']) {
             charts['chartEtario'].options.onClick = (evt, elements) => {
                 if (!elements.length) return
@@ -412,7 +424,7 @@
         const r = await fetch(`/api/indicators/by-programa?${filterQS('programa')}`)
         const d = await r.json()
         const labels = d.map(x => x.programa)
-        makeHorizBar('chartPrograma', labels, d.map(x => x.total))
+        makeChart('chartPrograma', 'bar', labels, d.map(x => x.total))
         if (charts['chartPrograma']) {
             charts['chartPrograma'].options.onClick = (evt, elements) => {
                 if (!elements.length) return
@@ -425,26 +437,11 @@
         const r = await fetch(`/api/indicators/by-provincia?${filterQS('provincia')}`)
         const d = await r.json()
         const labels = d.map(x => x.provincia)
-        makeHorizBar('chartProvincia', labels, d.map(x => x.total),
-            d.map((_, i) => COLORS[i % COLORS.length] + '99'))
+        makeHorizBar('chartProvincia', labels, d.map(x => x.total))
         if (charts['chartProvincia']) {
             charts['chartProvincia'].options.onClick = (evt, elements) => {
                 if (!elements.length) return
                 setFilter('provincia', labels[elements[0].index])
-            }
-        }
-    }
-
-    async function loadDepartamento() {
-        const r = await fetch(`/api/indicators/by-departamento?${filterQS('departamento')}`)
-        const d = await r.json()
-        const labels = d.map(x => x.label)
-        makeHorizBar('chartDepartamento', labels, d.map(x => x.total),
-            d.map((_, i) => COLORS[(i + 3) % COLORS.length] + '99'))
-        if (charts['chartDepartamento']) {
-            charts['chartDepartamento'].options.onClick = (evt, elements) => {
-                if (!elements.length) return
-                setFilter('departamento', labels[elements[0].index].split(',')[0].trim())
             }
         }
     }
@@ -499,14 +496,14 @@
                     tooltip: {
                         backgroundColor: isLight ? '#1f2937' : '#1a1d2a',
                         titleColor: '#fff', bodyColor: 'rgba(255,255,255,0.8)', padding: 10,
-                        callbacks: { label: c => 'Total: ' + fmtBig(c.raw) }
+                        callbacks: { label: c => 'Total: ' + (globalMetric === 'montos' ? fmtBig(c.raw) : c.raw.toLocaleString('es-AR')) }
                     },
                     datalabels: { display: false }
                 },
                 scales: {
                     x: { ticks: { color: tc, font: { size: 11 } }, grid: { display: false } },
                     y: {
-                        ticks: { color: tc, font: { size: 11 }, callback: v => fmtBig(v) },
+                        ticks: { color: tc, font: { size: 11 }, callback: v => globalMetric === 'montos' ? fmtBig(v) : fmtNum(v) },
                         grid: { color: gc, borderDash: [4, 4] }
                     }
                 }
@@ -514,100 +511,132 @@
         })
     }
 
-    // ── I-17 Mapa Geográfico ──
-    const PROV_COORDS = {
-        'Buenos Aires': [-36.13, -59.85],
-        'Córdoba': [-31.42, -64.18],
-        'Santa Fe': [-31.63, -60.70],
-        'Mendoza': [-32.89, -68.84],
-        'Tucumán': [-26.82, -65.22],
-        'Salta': [-24.78, -65.41],
-        'Chaco': [-27.45, -59.02],
-        'Corrientes': [-27.47, -58.83],
-        'Misiones': [-27.36, -55.90],
-        'Jujuy': [-24.19, -65.30],
-        'Entre Ríos': [-31.73, -60.53],
-        'Santiago del Estero': [-27.78, -64.26],
-        'San Juan': [-31.54, -68.54],
-        'San Luis': [-33.30, -66.34],
-        'Formosa': [-26.18, -58.17],
-        'Catamarca': [-28.47, -65.78],
-        'La Rioja': [-29.41, -66.85],
-        'Neuquén': [-38.95, -68.06],
-        'Río Negro': [-39.03, -67.08],
-        'Chubut': [-43.30, -65.10],
-        'Santa Cruz': [-51.62, -69.22],
-        'La Pampa': [-36.62, -64.29],
-        'Tierra del Fuego': [-54.80, -68.30],
-        'CABA': [-34.61, -58.38],
-    }
+    // ── Mapa Coroplético ──
     let leafletMap = null
-    let leafletLayer = null
+    let geoJsonLayer = null
+    let geoJsonData = null
+
+    // Paleta violeta de 7 niveles: claro → oscuro
+    const VIOLET_PALETTE = ['#ede9fe','#ddd6fe','#c4b5fd','#a78bfa','#8b5cf6','#7c3aed','#5b21b6']
+
+    // Calcula breaks por cuantiles: divide los valores reales en N grupos iguales
+    function quantileBreaks(values, nClasses) {
+        const sorted = [...values].filter(v => v > 0).sort((a, b) => a - b)
+        if (sorted.length === 0) return []
+        const breaks = []
+        for (let i = 1; i < nClasses; i++) {
+            const idx = Math.floor(i * sorted.length / nClasses)
+            breaks.push(sorted[Math.min(idx, sorted.length - 1)])
+        }
+        return breaks
+    }
+
+    function choroplethColor(val, breaks) {
+        for (let i = 0; i < breaks.length; i++) {
+            if (val <= breaks[i]) return VIOLET_PALETTE[i]
+        }
+        return VIOLET_PALETTE[VIOLET_PALETTE.length - 1]
+    }
 
     async function loadGeoMap() {
         const r = await fetch(`/api/indicators/by-provincia?${filterQS('provincia')}`)
-        const data = await r.json()
+        const apiData = await r.json()
 
         const mapDiv = document.getElementById('map-argentina')
         if (!mapDiv) return
 
         const isLight = document.body.classList.contains('light-theme')
         const tileUrl = isLight
-            ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
-            : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+            ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png'
+            : 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'
 
         if (!leafletMap) {
-            leafletMap = L.map('map-argentina').setView([-38.4, -63.6], 4)
+            leafletMap = L.map('map-argentina', {
+                zoomControl: true,
+                scrollWheelZoom: true
+            }).setView([-38.4, -63.6], 4)
             L.tileLayer(tileUrl, {
-                attribution: '&copy; OpenStreetMap, &copy; CARTO',
+                attribution: '&copy; OSM, &copy; CARTO',
                 maxZoom: 12
             }).addTo(leafletMap)
-            leafletLayer = L.layerGroup().addTo(leafletMap)
             setTimeout(() => leafletMap.invalidateSize(), 200)
         } else {
-            // Update tiles on theme change
             leafletMap.eachLayer(l => { if (l instanceof L.TileLayer) leafletMap.removeLayer(l) })
             L.tileLayer(tileUrl, {
-                attribution: '&copy; OpenStreetMap, &copy; CARTO',
+                attribution: '&copy; OSM, &copy; CARTO',
                 maxZoom: 12
             }).addTo(leafletMap)
-            leafletLayer.clearLayers()
         }
 
-        if (!data.length) return
-        const maxVal = Math.max(...data.map(d => d.total))
+        // Remove previous GeoJSON layer
+        if (geoJsonLayer) {
+            leafletMap.removeLayer(geoJsonLayer)
+            geoJsonLayer = null
+        }
 
-        data.forEach(d => {
-            const coords = PROV_COORDS[d.provincia]
-            if (!coords) return
-            const ratio = d.total / maxVal
-            const radius = 8000 + ratio * 80000
-            const color = ratio > 0.6 ? '#ef4444' : ratio > 0.3 ? '#f59e0b' : '#10b981'
-            const circle = L.circle(coords, {
-                radius,
-                color: color,
-                fillColor: color,
-                fillOpacity: 0.35,
-                weight: 2
-            })
-            circle.bindTooltip(
-                `<strong>${d.provincia}</strong><br>${d.total.toLocaleString('es-AR')} beneficiarios`,
-                { direction: 'top', className: 'leaflet-tooltip' }
-            )
-            circle.on('click', () => setFilter('provincia', d.provincia))
-            leafletLayer.addLayer(circle)
-        })
+        if (!apiData.length) return
+
+        // Build lookup: provincia name → total
+        const lookup = {}
+        apiData.forEach(d => { lookup[d.provincia] = d.total })
+        const allValues = apiData.map(d => d.total)
+        const breaks = quantileBreaks(allValues, VIOLET_PALETTE.length)
+
+        // Load GeoJSON if not cached
+        if (!geoJsonData) {
+            try {
+                const gr = await fetch('/static/argentina-provincias.geojson')
+                geoJsonData = await gr.json()
+            } catch (e) {
+                console.error('Error loading GeoJSON:', e)
+                return
+            }
+        }
+
+        const borderColor = isLight ? '#94a3b8' : '#475569'
+
+        geoJsonLayer = L.geoJSON(geoJsonData, {
+            style: function(feature) {
+                const name = feature.properties.nombre
+                const val = lookup[name] || 0
+                return {
+                    fillColor: val > 0 ? choroplethColor(val, breaks) : (isLight ? '#e2e8f0' : '#334155'),
+                    fillOpacity: val > 0 ? 0.75 : 0.15,
+                    color: borderColor,
+                    weight: 1.5,
+                    opacity: 0.8
+                }
+            },
+            onEachFeature: function(feature, layer) {
+                const name = feature.properties.nombre
+                const val = lookup[name] || 0
+                const valLabel = globalMetric === 'montos'
+                    ? fmtBig(val)
+                    : val.toLocaleString('es-AR') + ' beneficiarios'
+                layer.bindTooltip(
+                    `<strong>${name}</strong><br>${valLabel}`,
+                    { sticky: true, className: 'leaflet-tooltip' }
+                )
+                layer.on('click', () => setFilter('provincia', name))
+                layer.on('mouseover', function() {
+                    this.setStyle({ weight: 3, fillOpacity: 0.9 })
+                    this.bringToFront()
+                })
+                layer.on('mouseout', function() {
+                    geoJsonLayer.resetStyle(this)
+                })
+            }
+        }).addTo(leafletMap)
     }
 
     function loadAll() {
         loadSummary()
-        loadEvolucion()
-        loadSecretaria()
-        loadSexo()
-        loadEtario()
         loadPrograma()
+        loadSecretaria()
+        loadEvolucion()
+        loadEtario()
+        loadSexo()
         loadProvincia()
-        loadDepartamento()
         loadGeoMap()
     }
 
