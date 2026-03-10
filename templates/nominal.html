@@ -1,0 +1,663 @@
+{% extends "base.html" %}
+{% block nav_nominal %}active{% endblock %}
+
+{% block extra_head %}
+<style>
+    .filter-bar {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 20px;
+    }
+
+    .filter-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 140px;
+    }
+
+    .filter-label {
+        font-size: 10px;
+        color: var(--muted);
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .5px;
+    }
+
+    .filter-input,
+    .filter-select {
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 7px 10px;
+        color: var(--text);
+        font-size: 13px;
+        font-family: 'Inter', sans-serif;
+        outline: none;
+        transition: border-color .2s;
+    }
+
+    .filter-input:focus,
+    .filter-select:focus {
+        border-color: var(--primary);
+    }
+
+    .filter-select option {
+        background: var(--surface2);
+    }
+
+    .filter-actions {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        margin-left: auto;
+    }
+
+    .btn {
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+        font-family: 'Inter', sans-serif;
+        transition: opacity .15s, transform .1s;
+    }
+
+    .btn:active {
+        transform: scale(.97);
+    }
+
+    .btn-primary {
+        background: var(--primary);
+        color: #fff;
+    }
+
+    .btn-primary:hover {
+        opacity: .88;
+    }
+
+    .btn-ghost {
+        background: var(--surface2);
+        color: var(--muted);
+        border: 1px solid var(--border);
+    }
+
+    .btn-ghost:hover {
+        color: var(--text);
+    }
+
+    .btn-green {
+        background: rgba(16, 185, 129, .15);
+        color: var(--green);
+        border: 1px solid rgba(16, 185, 129, .3);
+    }
+
+    .btn-green:hover {
+        background: rgba(16, 185, 129, .25);
+    }
+
+    .table-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+    }
+
+    .table-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .table-meta span {
+        font-size: 13px;
+        color: var(--muted);
+    }
+
+    .table-meta strong {
+        color: var(--text);
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    thead th {
+        background: var(--surface2);
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .5px;
+        padding: 12px 16px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+    }
+
+    tbody tr {
+        border-bottom: 1px solid rgba(255, 255, 255, .04);
+        transition: background .15s;
+        cursor: pointer;
+    }
+
+    tbody tr:hover {
+        background: rgba(74, 103, 255, .06);
+    }
+
+    tbody td {
+        padding: 12px 16px;
+        font-size: 13px;
+    }
+
+    .td-muted {
+        color: var(--muted);
+    }
+
+    .tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    .tag-m {
+        background: rgba(74, 103, 255, .15);
+        color: #93a8ff;
+    }
+
+    .tag-f {
+        background: rgba(236, 72, 153, .12);
+        color: #f9a8d4;
+    }
+
+    .tag-x {
+        background: rgba(16, 185, 129, .12);
+        color: #6ee7b7;
+    }
+
+    .tag-ni {
+        background: rgba(255, 255, 255, .06);
+        color: var(--muted);
+    }
+
+    .tag-1 {
+        background: rgba(74, 103, 255, .15);
+        color: #93a8ff;
+    }
+
+    .tag-2 {
+        background: rgba(139, 92, 246, .15);
+        color: #c4b5fd;
+    }
+
+    .tag-3 {
+        background: rgba(16, 185, 129, .15);
+        color: #6ee7b7;
+    }
+
+    /* PAGINATION */
+    .pagination {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 20px;
+        border-top: 1px solid var(--border);
+    }
+
+    .pagination span {
+        font-size: 13px;
+        color: var(--muted);
+    }
+
+    .pag-btns {
+        display: flex;
+        gap: 6px;
+    }
+
+    .pag-btn {
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 13px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all .15s;
+    }
+
+    .pag-btn:hover:not(:disabled) {
+        background: rgba(74, 103, 255, .15);
+        color: var(--primary);
+        border-color: var(--primary);
+    }
+
+    .pag-btn.active {
+        background: var(--primary);
+        color: #fff;
+        border-color: var(--primary);
+    }
+
+    .pag-btn:disabled {
+        opacity: .35;
+        cursor: not-allowed;
+    }
+
+    /* DRAWER */
+    .drawer-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, .6);
+        z-index: 100;
+        display: none;
+    }
+
+    .drawer-overlay.open {
+        display: block;
+    }
+
+    .drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 440px;
+        height: 100vh;
+        z-index: 101;
+        background: var(--surface);
+        border-left: 1px solid var(--border);
+        transform: translateX(100%);
+        transition: transform .3s cubic-bezier(.4, 0, .2, 1);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .drawer.open {
+        transform: translateX(0);
+    }
+
+    .drawer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+
+    .drawer-header h3 {
+        font-size: 16px;
+        font-weight: 700;
+    }
+
+    .close-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        color: var(--muted);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: color .15s;
+    }
+
+    .close-btn:hover {
+        color: var(--text);
+    }
+
+    .drawer-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px;
+    }
+
+    .info-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-bottom: 24px;
+    }
+
+    .info-item {
+        background: var(--surface2);
+        border-radius: 10px;
+        padding: 12px;
+    }
+
+    .info-item .lbl {
+        font-size: 10px;
+        color: var(--muted);
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .5px;
+        margin-bottom: 4px;
+    }
+
+    .info-item .val {
+        font-size: 14px;
+        font-weight: 600;
+    }
+
+    .section-sep {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: .5px;
+        margin: 20px 0 10px;
+    }
+
+    .prestacion-item {
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 14px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .prestacion-item .prg {
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .prestacion-item .sec {
+        font-size: 11px;
+        color: var(--muted);
+    }
+
+    .estado-activo {
+        background: rgba(16, 185, 129, .15);
+        color: var(--green);
+        padding: 3px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 700;
+    }
+
+    .estado-inactivo {
+        background: rgba(239, 68, 68, .12);
+        color: var(--red);
+        padding: 3px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 700;
+    }
+
+    .pago-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, .05);
+    }
+
+    .pago-item:last-child {
+        border: none;
+    }
+
+    .pago-item .prg {
+        font-size: 13px;
+    }
+
+    .pago-item .monto {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--green);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="topbar">
+    <div class="topbar-title">Datos Nominales <small>/ Solo administradores</small></div>
+    <div class="period-selector">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
+        Período:
+        <select class="period-select" id="periodSelect" onchange="changePeriod(this.value)">
+            {% for p in periodos %}<option value="{{ p }}" {% if p==default_period %}selected{% endif %}>{{ p }}
+            </option>{% endfor %}
+        </select>
+    </div>
+    <span class="role-badge admin">admin</span>
+</div>
+
+<div class="content">
+    <div class="filter-bar">
+        <div class="filter-field">
+            <label class="filter-label">CUIL</label>
+            <input type="text" class="filter-input" id="fCuil" placeholder="Buscar CUIL..." style="width:160px" />
+        </div>
+        <div class="filter-field">
+            <label class="filter-label">Provincia</label>
+            <select class="filter-select" id="fProvincia">
+                <option value="">Todas</option>
+                {% for p in provincias %}<option value="{{ p.provincia }}">{{ p.provincia }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="filter-field">
+            <label class="filter-label">Programa</label>
+            <select class="filter-select" id="fPrograma">
+                <option value="">Todos</option>
+                {% for p in programs %}<option value="{{ p.id }}">{{ p.nombre_programa }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="filter-field">
+            <label class="filter-label">Sexo</label>
+            <select class="filter-select" id="fSexo">
+                <option value="">Todos</option>
+                <option value="M">Masculino</option>
+                <option value="F">Femenino</option>
+                <option value="X">No binario</option>
+                <option value="NI">No informado</option>
+            </select>
+        </div>
+        <div class="filter-field">
+            <label class="filter-label">Estado</label>
+            <select class="filter-select" id="fEstado">
+                <option value="ACTIVO">Activo</option>
+                <option value="INACTIVO">Inactivo</option>
+                <option value="">Todos</option>
+            </select>
+        </div>
+        <div class="filter-actions">
+            <button class="btn btn-primary" onclick="loadTable(1)">🔍 Filtrar</button>
+            <button class="btn btn-ghost" onclick="clearFilters()">Limpiar</button>
+        </div>
+    </div>
+
+    <div class="table-card">
+        <div class="table-meta">
+            <span>Total: <strong id="totalCount">—</strong> beneficiarios</span>
+        </div>
+        <div style="overflow-x:auto">
+            <table>
+                <thead>
+                    <tr>
+                        <th>CUIL</th>
+                        <th>Apellido y Nombre</th>
+                        <th>Sexo</th>
+                        <th>Edad</th>
+                        <th>Provincia</th>
+                        <th>Departamento</th>
+                        <th>Prestaciones</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody">
+                    <tr>
+                        <td colspan="7" style="text-align:center;padding:32px;color:var(--muted)">Cargando...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination">
+            <span id="pagInfo">Página 1</span>
+            <div class="pag-btns" id="pagBtns"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Drawer -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+    <div class="drawer-header">
+        <h3 id="drawerTitle">Detalle del beneficiario</h3>
+        <button class="close-btn" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="drawer-body" id="drawerBody">Cargando...</div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let period = '{{ default_period }}'
+    let currentPage = 1
+    const pageSize = 20
+
+    function changePeriod(p) { period = p; updateExportLink(); loadTable(1) }
+
+    function clearFilters() {
+        ['fCuil', 'fProvincia', 'fPrograma', 'fSexo'].forEach(id => document.getElementById(id).value = '')
+        document.getElementById('fEstado').value = 'ACTIVO'
+        loadTable(1)
+    }
+
+    function buildParams(page) {
+        const p = new URLSearchParams({
+            period, page, pageSize,
+            cuil: document.getElementById('fCuil').value,
+            provincia: document.getElementById('fProvincia').value,
+            programa: document.getElementById('fPrograma').value,
+            sexo: document.getElementById('fSexo').value,
+            estado: document.getElementById('fEstado').value,
+        })
+        return p.toString()
+    }
+
+    function updateExportLink() {
+        const p = new URLSearchParams({
+            period,
+            provincia: document.getElementById('fProvincia').value,
+            programa: document.getElementById('fPrograma').value,
+            sexo: document.getElementById('fSexo').value,
+        })
+    }
+
+    const SEXO_MAP = { M: ['Masculino', 'tag-m'], F: ['Femenino', 'tag-f'], X: ['No binario', 'tag-x'], NI: ['No inf.', 'tag-ni'] }
+
+    async function loadTable(page) {
+        currentPage = page
+        updateExportLink()
+        document.getElementById('tableBody').innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted)">Cargando...</td></tr>'
+        const r = await fetch(`/api/nominal/beneficiaries?${buildParams(page)}`)
+        const d = await r.json()
+        document.getElementById('totalCount').textContent = d.total.toLocaleString('es-AR')
+        const totalPages = Math.ceil(d.total / pageSize)
+        renderTable(d.items)
+        renderPagination(page, totalPages, d.total)
+    }
+
+    function renderTable(items) {
+        const tb = document.getElementById('tableBody')
+        if (!items.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted)">Sin resultados para los filtros seleccionados</td></tr>'; return }
+        tb.innerHTML = items.map(b => {
+            const [slabel, sclass] = SEXO_MAP[b.sexo] || ['—', 'tag-ni']
+            const cntClass = b.cantPrestaciones === 1 ? 'tag-1' : b.cantPrestaciones === 2 ? 'tag-2' : 'tag-3'
+            return `<tr onclick="openDrawer(${b.id})">
+      <td><code style="font-size:12px;color:var(--muted)">${b.cuil}</code></td>
+      <td><strong>${b.apellido}</strong>, ${b.nombre}</td>
+      <td><span class="tag ${sclass}">${slabel}</span></td>
+      <td>${b.edad ?? '—'}</td>
+      <td>${b.provincia}</td>
+      <td class="td-muted">${b.departamento}</td>
+      <td><span class="tag ${cntClass}">${b.cantPrestaciones}</span></td>
+    </tr>`
+        }).join('')
+    }
+
+    function renderPagination(page, total, totalItems) {
+        document.getElementById('pagInfo').textContent = `Página ${page} de ${total || 1}`
+        const btns = document.getElementById('pagBtns')
+        const pages = Math.min(total, 7)
+        let start = Math.max(1, page - 3)
+        let end = Math.min(total, start + pages - 1)
+        start = Math.max(1, end - pages + 1)
+        let html = `<button class="pag-btn" onclick="loadTable(${page - 1})" ${page <= 1 ? 'disabled' : ''}>‹</button>`
+        for (let i = start; i <= end; i++) html += `<button class="pag-btn ${i === page ? 'active' : ''}" onclick="loadTable(${i})">${i}</button>`
+        html += `<button class="pag-btn" onclick="loadTable(${page + 1})" ${page >= total ? 'disabled' : ''}>›</button>`
+        btns.innerHTML = html
+    }
+
+    function sexoLabel(s) { return { M: 'Masculino', F: 'Femenino', X: 'No binario', NI: 'No informado' }[s] || s }
+
+    async function openDrawer(id) {
+        document.getElementById('drawerOverlay').classList.add('open')
+        document.getElementById('drawer').classList.add('open')
+        document.getElementById('drawerBody').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Cargando...</div>'
+        const r = await fetch(`/api/nominal/beneficiaries/${id}?period=${period}`)
+        const b = await r.json()
+        document.getElementById('drawerTitle').textContent = `${b.apellido}, ${b.nombre}`
+        const montoTotal = b.pagos.reduce((s, p) => s + p.monto_prestacion, 0)
+        document.getElementById('drawerBody').innerHTML = `
+    <div class="info-grid">
+      <div class="info-item"><div class="lbl">CUIL</div><div class="val" style="font-family:monospace">${b.cuil}</div></div>
+      <div class="info-item"><div class="lbl">Sexo</div><div class="val">${sexoLabel(b.sexo)}</div></div>
+      <div class="info-item"><div class="lbl">Edad</div><div class="val">${b.edad ?? '—'} años</div></div>
+      <div class="info-item"><div class="lbl">Nacimiento</div><div class="val">${b.fecha_nacimiento}</div></div>
+      <div class="info-item"><div class="lbl">Provincia</div><div class="val">${b.provincia}</div></div>
+      <div class="info-item"><div class="lbl">Departamento</div><div class="val">${b.departamento}</div></div>
+      <div class="info-item"><div class="lbl">CP</div><div class="val">${b.cp || '—'}</div></div>
+      <div class="info-item"><div class="lbl">Monto período</div><div class="val" style="color:var(--green)">$${montoTotal.toLocaleString('es-AR', { minimumFractionDigits: 0 })}</div></div>
+    </div>
+    <div class="section-sep">Prestaciones activas en ${period}</div>
+    ${b.prestaciones.map(p => `
+      <div class="prestacion-item">
+        <div><div class="prg">${p.nombre_programa}</div><div class="sec">${p.secretaria_origen.replace('Secretaría de ', '')}</div></div>
+        <span class="${p.estado_beneficio === 'ACTIVO' ? 'estado-activo' : 'estado-inactivo'}">${p.estado_beneficio}</span>
+      </div>`).join('') || '<div style="color:var(--muted);font-size:13px">Sin prestaciones para este período</div>'}
+    <div class="section-sep">Pagos realizados en ${period}</div>
+    ${b.pagos.map(p => `
+      <div class="pago-item">
+        <div>
+          <div class="prg">${p.nombre_programa}</div>
+          <div style="font-size:11px;color:var(--muted)">${p.fecha_pago}</div>
+        </div>
+        <div class="monto">$${p.monto_prestacion.toLocaleString('es-AR', { minimumFractionDigits: 0 })}</div>
+      </div>`).join('') || '<div style="color:var(--muted);font-size:13px">Sin pagos para este período</div>'}
+  `
+    }
+
+    function closeDrawer() {
+        document.getElementById('drawerOverlay').classList.remove('open')
+        document.getElementById('drawer').classList.remove('open')
+    }
+
+    loadTable(1)
+    updateExportLink()
+</script>
+{% endblock %}

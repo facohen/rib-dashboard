@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard SIIS – Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+    rel="stylesheet" />
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      background: #0f1117;
+      color: #fff;
+    }
+
+    /* ── LOGIN HERO ── */
+    .hero-view {
+      display: flex;
+      flex-direction: column;
+      background: linear-gradient(135deg, #1a1f3a 0%, #0f1117 60%, #1a1838 100%);
+      position: relative;
+      overflow: hidden;
+      min-height: 100vh;
+      width: 100%;
+    }
+
+    .hero-view::before {
+      content: '';
+      position: absolute;
+      width: 800px;
+      height: 800px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(74, 103, 255, .15) 0%, transparent 70%);
+      top: -200px;
+      left: -200px;
+    }
+
+    .hero-view::after {
+      content: '';
+      position: absolute;
+      width: 600px;
+      height: 600px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(139, 92, 246, .12) 0%, transparent 70%);
+      bottom: -100px;
+      right: -100px;
+    }
+
+    .hero-nav {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 24px 40px;
+    }
+
+    .hero-brand-sm {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo-xs {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #4a67ff, #7c3aed);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 900;
+      box-shadow: 0 4px 12px rgba(74, 103, 255, .3);
+    }
+
+    .hero-brand-sm span {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .hero-brand-sm strong {
+      color: #4a67ff;
+      font-weight: 800;
+    }
+
+    .btn-outline-login {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #fff;
+      padding: 10px 24px;
+      border-radius: 9px;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.2s;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .btn-outline-login:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .hero-center {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      z-index: 10;
+    }
+
+    .login-brand {
+      text-align: center;
+      max-width: 500px;
+      padding: 40px;
+    }
+
+    .brand-logo {
+      width: 80px;
+      height: 80px;
+      border-radius: 22px;
+      margin: 0 auto 32px;
+      background: linear-gradient(135deg, #4a67ff, #7c3aed);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 34px;
+      font-weight: 900;
+      box-shadow: 0 12px 32px rgba(74, 103, 255, .4);
+    }
+
+    .login-brand h1 {
+      font-size: 40px;
+      font-weight: 900;
+      letter-spacing: -1.5px;
+      margin-bottom: 12px;
+    }
+
+    .login-brand h1 span {
+      color: #4a67ff;
+    }
+
+    .login-brand p {
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 16px;
+      line-height: 1.6;
+      margin-bottom: 48px;
+    }
+
+    .login-stats {
+      display: flex;
+      gap: 48px;
+      justify-content: center;
+    }
+
+    .ls {
+      text-align: center;
+    }
+
+    .ls-num {
+      font-size: 36px;
+      font-weight: 900;
+      color: #4a67ff;
+      margin-bottom: 4px;
+    }
+
+    .ls-lbl {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.4);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      font-weight: 700;
+    }
+
+    /* MODAL */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-box {
+      background: #13151e;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 36px;
+      width: 100%;
+      max-width: 400px;
+      position: relative;
+      transform: translateY(20px);
+      transition: transform 0.3s ease;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+    }
+
+    .modal-overlay.open .modal-box {
+      transform: translateY(0);
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 20px;
+      cursor: pointer;
+      transition: color 0.2s;
+      padding: 4px;
+      border-radius: 6px;
+    }
+
+    .modal-close:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .login-card h2 {
+      font-size: 24px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .login-sub {
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 14px;
+      margin-bottom: 28px;
+    }
+
+    .field {
+      margin-bottom: 18px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.6);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .field input {
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #fff;
+      font-size: 14px;
+      font-family: 'Inter', sans-serif;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      outline: none;
+    }
+
+    .field input:focus {
+      border-color: #4a67ff;
+      box-shadow: 0 0 0 3px rgba(74, 103, 255, 0.15);
+    }
+
+    .field input::placeholder {
+      color: rgba(255, 255, 255, 0.25);
+    }
+
+    .btn-login {
+      width: 100%;
+      padding: 13px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      background: linear-gradient(135deg, #4a67ff, #7c3aed);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      font-family: 'Inter', sans-serif;
+      transition: opacity 0.2s, transform 0.1s;
+      margin-top: 8px;
+      box-shadow: 0 4px 16px rgba(74, 103, 255, 0.35);
+    }
+
+    .btn-login:hover {
+      opacity: 0.9;
+    }
+
+    .btn-login:active {
+      transform: scale(0.98);
+    }
+
+    .error {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    .demo-hint {
+      margin-top: 24px;
+      background: rgba(74, 103, 255, 0.08);
+      border: 1px solid rgba(74, 103, 255, 0.2);
+      border-radius: 10px;
+      padding: 14px;
+    }
+
+    .demo-hint p {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.4);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+    }
+
+    .demo-user {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+    }
+
+    .demo-user span {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    .demo-user strong {
+      font-size: 12px;
+      color: #a78bfa;
+    }
+
+    .demo-btn {
+      font-size: 11px;
+      color: #4a67ff;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+    }
+
+    .custom-select {
+      position: relative;
+      width: 100%;
+      margin-bottom: 8px;
+    }
+
+    .select-btn {
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      font-size: 14px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .select-btn:hover {
+      border-color: #4a67ff;
+    }
+
+    .user-email {
+      font-size: 14px;
+      color: #fff;
+    }
+
+    .user-role {
+      font-size: 11px;
+      color: #a78bfa;
+    }
+
+    .role-user {
+      color: #93a8ff !important;
+    }
+
+    .select-options {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      width: 100%;
+      background: #1a1d2a;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .option {
+      padding: 12px 16px;
+      cursor: pointer;
+      transition: background 0.15s;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .option:last-child {
+      border-bottom: none;
+    }
+
+    .option:hover {
+      background: rgba(74, 103, 255, 0.15);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="hero-view">
+    <div class="hero-nav">
+      <div class="hero-brand-sm">
+        <div class="brand-logo-xs">S</div>
+        <span>Dashboard <strong>SIIS</strong></span>
+      </div>
+      <button class="btn-outline-login" onclick="toggleLoginModal(true)">Iniciar sesión</button>
+    </div>
+
+    <div class="hero-center">
+      <div class="login-brand">
+        <div class="brand-logo">S</div>
+        <h1>Dashboard <span>SIIS</span></h1>
+        <p>Sistema Integral de Información Social<br />Sistema de monitoreo de prestaciones sociales</p>
+        <div class="login-stats">
+          <div class="ls">
+            <div class="ls-num">15</div>
+            <div class="ls-lbl">Indicadores</div>
+          </div>
+          <div class="ls">
+            <div class="ls-num">300</div>
+            <div class="ls-lbl">Beneficiarios</div>
+          </div>
+          <div class="ls">
+            <div class="ls-num">8</div>
+            <div class="ls-lbl">Programas</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── MODAL LOGIN ── -->
+    <div class="modal-overlay" id="loginModal" onclick="closeModalOutside(event)">
+      <div class="modal-box login-card" id="loginModalBox">
+        <button class="modal-close" type="button" onclick="toggleLoginModal(false)">✕</button>
+        <h2>Iniciar sesión</h2>
+        <p class="login-sub">Ingresá con tus credenciales institucionales</p>
+        {% if error %}
+        <div class="error">⚠ {{ error }}</div>
+        {% endif %}
+        <form method="POST" action="/login">
+          <div class="field">
+            <label>Usuario / Rol</label>
+            <div class="custom-select" onclick="toggleLoginDropdown()">
+              <div class="select-btn" id="loginUserLabel">
+                <div><span class="user-email">admin@demo.local</span><br /><strong class="user-role">Administrador
+                    (Acceso completo)</strong></div>
+                <span class="arrow">▼</span>
+              </div>
+              <div class="select-options" id="loginOptions" style="display:none;">
+                <div class="option"
+                  onclick="selectLoginUser('admin@demo.local', 'Administrador (Acceso completo)', event)">
+                  <div><span class="user-email">admin@demo.local</span><br /><strong class="user-role">Administrador
+                      (Acceso completo)</strong></div>
+                </div>
+                <div class="option" onclick="selectLoginUser('user@demo.local', 'Usuario (Solo agregados)', event)">
+                  <div><span class="user-email">user@demo.local</span><br /><strong class="user-role role-user">Usuario
+                      (Solo agregados)</strong></div>
+                </div>
+              </div>
+            </div>
+            <input type="hidden" name="email" id="loginEmail" value="admin@demo.local">
+          </div>
+          <input type="hidden" name="password" value="Demo123!">
+          <button type="submit" class="btn-login">Ingresar al sistema →</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <script>
+    function toggleLoginModal(show) {
+      const mod = document.getElementById('loginModal');
+      if (show) mod.classList.add('open');
+      else mod.classList.remove('open');
+    }
+
+    function closeModalOutside(e) {
+      if (e.target === document.getElementById('loginModal')) {
+        toggleLoginModal(false);
+      }
+    }
+
+    function toggleLoginDropdown() {
+      const opts = document.getElementById('loginOptions');
+      opts.style.display = opts.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function selectLoginUser(email, roleText, e) {
+      if (e) e.stopPropagation();
+      document.getElementById('loginEmail').value = email;
+      const roleClass = email.includes('admin') ? 'user-role' : 'user-role role-user';
+      document.getElementById('loginUserLabel').innerHTML = `<div><span class="user-email">${email}</span><br/><strong class="${roleClass}">${roleText}</strong></div> <span class="arrow">▼</span>`;
+      document.getElementById('loginOptions').style.display = 'none';
+    }
+
+    document.addEventListener('click', (e) => {
+      const sel = document.querySelector('.custom-select');
+      if (sel && !sel.contains(e.target)) {
+        document.getElementById('loginOptions').style.display = 'none';
+      }
+    });
+  </script>
+</body>
+
+</html>

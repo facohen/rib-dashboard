@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+env/
+.venv/
+
+# Base de datos SQLite (datos sensibles)
+*.db
+*.sqlite3
+
+# Variables de entorno
+.env
+.env.*
+
+# Flask
+instance/
+.flask_session/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
