@@ -32,10 +32,9 @@ app.secret_key = "rub-dashboard-secret-2026-change-in-prod"
 # ──────────────────────────────────────────────
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-CHATBOT_MODEL = os.environ.get("CHATBOT_MODEL", "qwen3:4b")
+CHATBOT_MODEL = os.environ.get("CHATBOT_MODEL", "qwen2.5-coder:7b")
 
-SQL_GEN_PROMPT = """/no_think
-Solo SELECT PostgreSQL. Solo la query, sin explicacion, sin backticks. LIMIT 100. Si no podes, responde NO_SQL.
+SQL_GEN_PROMPT = """Solo SELECT PostgreSQL. Solo la query, sin explicacion, sin backticks. LIMIT 100. Si no podes, responde NO_SQL.
 
 TABLAS:
 beneficiaries(id,cuil,nombre,apellido,sexo,fecha_nacimiento,provincia,departamento)
@@ -54,8 +53,7 @@ montos: SELECT p.nombre_programa,SUM(pay.monto_prestacion) FROM payments pay JOI
 multi: SELECT COUNT(*) FROM (SELECT beneficiary_id FROM benefits WHERE estado_beneficio='ACTIVO' AND periodo_mes='2026-03' GROUP BY 1 HAVING COUNT(DISTINCT program_id)>1) s
 """
 
-ANSWER_PROMPT = """/no_think
-Responde en espanol usando SOLO los datos recibidos. No inventes datos.
+ANSWER_PROMPT = """Responde en espanol usando SOLO los datos recibidos. No inventes datos.
 Formato markdown: tablas con | y --- para datos tabulares, **negrita** para numeros clave.
 Montos en pesos con separador de miles. Se breve."""
 
@@ -228,7 +226,8 @@ def api_chatbot_ask():
         {"role": "system", "content": SQL_GEN_PROMPT},
         {"role": "user", "content": user_msg}
     ]
-    payload = {"model": CHATBOT_MODEL, "messages": sql_messages, "stream": False}
+    payload = {"model": CHATBOT_MODEL, "messages": sql_messages, "stream": False,
+                "options": {"num_predict": 200, "temperature": 0}}
     print(f"[CHATBOT]   POST {OLLAMA_URL}/api/chat (stream=False, timeout=120)")
     print(f"[CHATBOT]   Payload size: {len(json_mod.dumps(payload))} bytes")
     try:
@@ -349,8 +348,9 @@ def _stream_answer(user_msg, history, sql_query, sql_result, sql_error=None):
         try:
             print(f"[CHATBOT-STREAM] POST {OLLAMA_URL}/api/chat (stream=True, timeout=120)")
             resp = http_requests.post(f"{OLLAMA_URL}/api/chat",
-                json={"model": CHATBOT_MODEL, "messages": messages, "stream": True},
-                stream=True, timeout=120)
+                json={"model": CHATBOT_MODEL, "messages": messages, "stream": True,
+                      "options": {"num_predict": 500, "temperature": 0}},
+                stream=True, timeout=180)
             print(f"[CHATBOT-STREAM] HTTP {resp.status_code}")
             resp.raise_for_status()
             first_token_time = None

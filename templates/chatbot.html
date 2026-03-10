@@ -586,8 +586,10 @@
                 })
             });
 
+            console.log('[CHAT] Response status:', resp.status);
             if (!resp.ok) {
                 const err = await resp.json();
+                console.error('[CHAT] Error response:', err);
                 typingEl.classList.remove('visible');
                 addBubble('error', err.error || 'Error del servidor');
                 isStreaming = false;
@@ -601,10 +603,17 @@
             let fullText = '';
             let assistantBubble = null;
             let metaData = null;
+            let tokenCount = 0;
+            const t0 = performance.now();
+
+            console.log('[CHAT] Iniciando lectura de stream...');
 
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) break;
+                if (done) {
+                    console.log(`[CHAT] Stream finalizado. Tokens: ${tokenCount}, Texto: ${fullText.length} chars, Tiempo: ${((performance.now()-t0)/1000).toFixed(1)}s`);
+                    break;
+                }
 
                 const chunk = decoder.decode(value, { stream: true });
                 const lines = chunk.split('\n');
@@ -614,22 +623,29 @@
                     let data;
                     try {
                         data = JSON.parse(line);
-                    } catch {
+                    } catch (e) {
+                        console.warn('[CHAT] JSON parse error:', line.substring(0, 100));
                         continue;
                     }
 
                     if (data.type === 'meta') {
                         metaData = data;
+                        console.log('[CHAT] Meta recibido:', JSON.stringify(metaData));
                         continue;
                     }
 
                     if (data.type === 'error') {
+                        console.error('[CHAT] Error del servidor:', data.content);
                         typingEl.classList.remove('visible');
                         addBubble('error', data.content);
                         break;
                     }
 
                     if (data.type === 'token') {
+                        tokenCount++;
+                        if (tokenCount === 1) {
+                            console.log(`[CHAT] Primer token en ${((performance.now()-t0)/1000).toFixed(1)}s`);
+                        }
                         // Hide typing on first token
                         typingEl.classList.remove('visible');
 
@@ -643,6 +659,10 @@
 
                         assistantBubble.innerHTML = marked.parse(fullText);
                         scrollToBottom();
+
+                        if (data.done) {
+                            console.log(`[CHAT] Token done=true. Total: ${tokenCount} tokens, ${fullText.length} chars`);
+                        }
                     }
                 }
             }
@@ -650,11 +670,16 @@
             // Done streaming
             if (fullText) {
                 chatHistory.push({ role: 'assistant', content: fullText });
+                console.log('[CHAT] Respuesta guardada en historial');
+            } else {
+                console.warn('[CHAT] Stream termino sin texto!');
             }
 
             // Debug panel
             if (metaData) {
                 addDebugPanel(metaData.sql, metaData.sql_error, metaData.row_count);
+            } else {
+                console.warn('[CHAT] No se recibio metadata!');
             }
 
         } catch (e) {
