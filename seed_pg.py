@@ -5,13 +5,14 @@ Genera 8M beneficiarios, ~200M benefits, pagos correspondientes.
 Uso:
     DATABASE_URL=postgresql://user:pass@host/rub python seed_pg.py
     DATABASE_URL=postgresql://user:pass@host/rub python seed_pg.py --small   # 10K para test rápido
+    DATABASE_URL=postgresql://user:pass@host/rub python seed_pg.py --1m      # 1M registros
 """
 import os, sys, hashlib, random, time
 from datetime import date, timedelta
 import psycopg2
 from psycopg2.extras import execute_values
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://localhost/rub")
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost/rub")
 BATCH_SIZE = 10_000
 
 # ──────────────────────────────────────────────
@@ -185,7 +186,12 @@ CREATE INDEX idx_payments_benid_period ON payments(beneficiary_id, periodo_mes);
 """
 
 
+RANDOM_SEED = 42
+
+
 def run(num_beneficiaries=8_000_000):
+    random.seed(RANDOM_SEED)
+
     conn = psycopg2.connect(DATABASE_URL)
     conn.autocommit = False
     cur = conn.cursor()
@@ -193,10 +199,16 @@ def run(num_beneficiaries=8_000_000):
     t0 = time.time()
     print(f"🏗️  Generando {num_beneficiaries:,} beneficiarios en PostgreSQL...")
     print(f"   URL: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
+    print(f"   Random seed: {RANDOM_SEED}")
 
-    # ── Schema ──
+    # ── Schema (crear si no existe) ──
     print("\n📋 Creando schema...")
     cur.execute(SCHEMA)
+    conn.commit()
+
+    # ── Truncar tablas para nueva distribución ──
+    print("🗑️  Truncando tablas...")
+    cur.execute("TRUNCATE payments, benefits, incompatibility_rules, programs, beneficiaries, users RESTART IDENTITY CASCADE")
     conn.commit()
 
     # ── Usuarios ──
@@ -427,5 +439,7 @@ if __name__ == "__main__":
         run(num_beneficiaries=10_000)
     elif "--medium" in sys.argv:
         run(num_beneficiaries=100_000)
+    elif "--1m" in sys.argv:
+        run(num_beneficiaries=1_000_000)
     else:
         run(num_beneficiaries=8_000_000)

@@ -126,6 +126,12 @@
             <div class="chart-sub">Por cantidad de beneficiarios activos</div>
             <div class="chart-wrap"><canvas id="chartDepartamento" height="260"></canvas></div>
         </div>
+        <!-- I-17 Mapa Geográfico -->
+        <div class="chart-card col-12">
+            <h3>I-17 Mapa Geográfico de Beneficiarios</h3>
+            <div class="chart-sub">Concentración por provincia</div>
+            <div id="map-argentina" style="width:100%; height:420px; border-radius:8px; z-index:1;"></div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -383,7 +389,7 @@
         if (charts['chartSexo']) {
             charts['chartSexo'].options.onClick = (evt, elements) => {
                 if (!elements.length) return
-                setFilter('sexo', labels[elements[0].index])
+                setFilter('sexo', d[elements[0].index].sexo)
             }
         }
     }
@@ -508,6 +514,91 @@
         })
     }
 
+    // ── I-17 Mapa Geográfico ──
+    const PROV_COORDS = {
+        'Buenos Aires': [-36.13, -59.85],
+        'Córdoba': [-31.42, -64.18],
+        'Santa Fe': [-31.63, -60.70],
+        'Mendoza': [-32.89, -68.84],
+        'Tucumán': [-26.82, -65.22],
+        'Salta': [-24.78, -65.41],
+        'Chaco': [-27.45, -59.02],
+        'Corrientes': [-27.47, -58.83],
+        'Misiones': [-27.36, -55.90],
+        'Jujuy': [-24.19, -65.30],
+        'Entre Ríos': [-31.73, -60.53],
+        'Santiago del Estero': [-27.78, -64.26],
+        'San Juan': [-31.54, -68.54],
+        'San Luis': [-33.30, -66.34],
+        'Formosa': [-26.18, -58.17],
+        'Catamarca': [-28.47, -65.78],
+        'La Rioja': [-29.41, -66.85],
+        'Neuquén': [-38.95, -68.06],
+        'Río Negro': [-39.03, -67.08],
+        'Chubut': [-43.30, -65.10],
+        'Santa Cruz': [-51.62, -69.22],
+        'La Pampa': [-36.62, -64.29],
+        'Tierra del Fuego': [-54.80, -68.30],
+        'CABA': [-34.61, -58.38],
+    }
+    let leafletMap = null
+    let leafletLayer = null
+
+    async function loadGeoMap() {
+        const r = await fetch(`/api/indicators/by-provincia?${filterQS('provincia')}`)
+        const data = await r.json()
+
+        const mapDiv = document.getElementById('map-argentina')
+        if (!mapDiv) return
+
+        const isLight = document.body.classList.contains('light-theme')
+        const tileUrl = isLight
+            ? 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
+            : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+
+        if (!leafletMap) {
+            leafletMap = L.map('map-argentina').setView([-38.4, -63.6], 4)
+            L.tileLayer(tileUrl, {
+                attribution: '&copy; OpenStreetMap, &copy; CARTO',
+                maxZoom: 12
+            }).addTo(leafletMap)
+            leafletLayer = L.layerGroup().addTo(leafletMap)
+            setTimeout(() => leafletMap.invalidateSize(), 200)
+        } else {
+            // Update tiles on theme change
+            leafletMap.eachLayer(l => { if (l instanceof L.TileLayer) leafletMap.removeLayer(l) })
+            L.tileLayer(tileUrl, {
+                attribution: '&copy; OpenStreetMap, &copy; CARTO',
+                maxZoom: 12
+            }).addTo(leafletMap)
+            leafletLayer.clearLayers()
+        }
+
+        if (!data.length) return
+        const maxVal = Math.max(...data.map(d => d.total))
+
+        data.forEach(d => {
+            const coords = PROV_COORDS[d.provincia]
+            if (!coords) return
+            const ratio = d.total / maxVal
+            const radius = 8000 + ratio * 80000
+            const color = ratio > 0.6 ? '#ef4444' : ratio > 0.3 ? '#f59e0b' : '#10b981'
+            const circle = L.circle(coords, {
+                radius,
+                color: color,
+                fillColor: color,
+                fillOpacity: 0.35,
+                weight: 2
+            })
+            circle.bindTooltip(
+                `<strong>${d.provincia}</strong><br>${d.total.toLocaleString('es-AR')} beneficiarios`,
+                { direction: 'top', className: 'leaflet-tooltip' }
+            )
+            circle.on('click', () => setFilter('provincia', d.provincia))
+            leafletLayer.addLayer(circle)
+        })
+    }
+
     function loadAll() {
         loadSummary()
         loadEvolucion()
@@ -517,6 +608,7 @@
         loadPrograma()
         loadProvincia()
         loadDepartamento()
+        loadGeoMap()
     }
 
     loadAll()
