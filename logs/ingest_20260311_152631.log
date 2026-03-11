@@ -1,0 +1,26 @@
+15:26:31 
+=======================================================
+15:26:31   RUB — Ingesta de Datasets
+15:26:31   DB: localhost/rub
+15:26:31   Log: C:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_152631.log
+15:26:31 =======================================================
+15:26:31 
+  Cargando: ALIMENTAR...
+15:26:31 
+-------------------------------------------------------
+15:26:31   ALIMENTAR -- Cruce menores + titulares
+15:26:31   Menores:   C:\Users\fcohen\repos\rub-dashboard\datasets\RUB\ALIMENTAR/Menores/unificado_menores.csv
+15:26:31   Titulares: C:\Users\fcohen\repos\rub-dashboard\datasets\RUB\ALIMENTAR/Titulares/titulares_serie_202603102327.csv
+15:26:31 -------------------------------------------------------
+15:26:31   Cache cargado (0.0s):
+15:26:31     1 secretarías, 1 programas
+15:26:31     0 CUILs, 0 benefits, 0 pagos
+15:26:31   Paso 1+2: pipeline lazy (counts + titulares + monto)...
+15:26:31     Collecting lookup (compact types)...
+15:26:49     Lookup: 62,509,069 filas, 1431 MB
+15:26:49     Collecting prenatal...
+15:27:00     Prenatal: 1,782,256 filas
+15:27:00   Paso 3: procesando menores en chunks...
+15:27:00   *** MODO TEST: limite de 50,000 filas ***
+15:27:08   Chunk 1: 50,000 filas [1,346/s]  ben=49,987 benf=49,987 pay=49,994
+15:27:08   Paso 4: procesando 1,782,256 titulares con prenatal...

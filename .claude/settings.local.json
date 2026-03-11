@@ -7,7 +7,9 @@
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:apis.datos.gob.ar)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(printf '2\\\\n4\\\\n0\\\\n')",
+      "Bash(python ingest.py)"
     ]
   }
 }

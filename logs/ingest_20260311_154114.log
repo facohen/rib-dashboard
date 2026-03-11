@@ -1,0 +1,22 @@
+15:41:14 
+=======================================================
+15:41:14   RUB — Ingesta de Datasets
+15:41:14   DB: localhost/rub
+15:41:14   Log: C:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_154114.log
+15:41:14 =======================================================
+15:41:14 
+  Cargando: ALIMENTAR...
+15:41:14 
+-------------------------------------------------------
+15:41:14   ALIMENTAR -- Cruce menores + titulares (PG temp tables)
+15:41:14   Menores:   C:\Users\fcohen\repos\rub-dashboard\datasets\RUB\ALIMENTAR/Menores/unificado_menores.csv
+15:41:14   Titulares: C:\Users\fcohen\repos\rub-dashboard\datasets\RUB\ALIMENTAR/Titulares/titulares_serie_202603102327.csv
+15:41:14 -------------------------------------------------------
+15:41:18   Cache cargado (3.6s):
+15:41:18     1 secretarías, 1 programas
+15:41:18     493,798 CUILs, 1,397,091 benefits, 1,397,100 pagos
+15:41:18   Fase 1: cargando menores a tabla temporal...
+15:42:27     104,239,072 filas copiadas (73s)
+15:42:27   Fase 1: cargando titulares a tabla temporal...
+15:43:28     62,509,077 filas copiadas (134s)
+15:43:28   Fase 2: creando indices y contando hijos...

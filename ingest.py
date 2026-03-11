@@ -17,6 +17,7 @@ Reglas de ingesta:
   - CUIL inválido (<8 chars): benefit con beneficiary_id=NULL
 """
 
+import io
 import os
 import re
 import sys
@@ -56,9 +57,9 @@ def _empty_totals():
     return {k: 0 for k in _STAT_KEYS}
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Preprocesamiento genérico y por dataset
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def _split_apellido_nombre(df, src_col):
     """Divide 'APELLIDO NOMBRE...' en _apellido (primer token) y _nombre (resto)."""
@@ -155,9 +156,9 @@ PREPROCESS_REGISTRY = {
 }
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Conexión
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def get_conn():
     conn = psycopg2.connect(DATABASE_URL)
@@ -165,9 +166,9 @@ def get_conn():
     return conn
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Caches en memoria (se cargan una vez, se actualizan al insertar)
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 class IngestCache:
     """Caches de lookup para evitar SELECTs repetidos."""
@@ -214,9 +215,9 @@ class IngestCache:
         log.info(f"    {len(self.cuils):,} CUILs, {len(self.benefits):,} benefits, {len(self.payments):,} pagos")
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Resolvers (pocos registros: secretarías y programas)
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def _ensure_secretaria(conn, cache, nombre):
     if nombre in cache.secretarias:
@@ -248,9 +249,9 @@ def _ensure_program(conn, cache, nombre_programa, secretaria):
     return pid
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Limpieza de datos en Polars (en memoria, por chunk)
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def clean_chunk(df, col_map, defaults):
     """
@@ -375,9 +376,9 @@ def clean_chunk(df, col_map, defaults):
     return df
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Escritura directa a tablas finales (por chunk)
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedup=False):
     """
@@ -484,7 +485,7 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
             if stats["errores"] <= 3:
                 log.warning(f"      ERROR: {e}")
 
-    # ── Flush all batches (single cursor, single commit) ──
+    # -- Flush all batches (single cursor, single commit) --
     cur = conn.cursor()
 
     for i in range(0, len(ben_batch), BATCH_SIZE):
@@ -536,9 +537,9 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
     return stats
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Pipeline completo
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def ingest_csv(conn, csv_path, config):
     """
@@ -558,9 +559,9 @@ def ingest_csv(conn, csv_path, config):
 
     t0 = time.time()
 
-    log.info(f"\n{'─'*55}")
+    log.info(f"\n{'-'*55}")
     log.info(f"  Ingestando: {csv_path}")
-    log.info(f"{'─'*55}")
+    log.info(f"{'-'*55}")
 
     # Detectar columnas
     schema = pl.scan_csv(csv_path, infer_schema_length=0,
@@ -656,9 +657,9 @@ def ingest_csv(conn, csv_path, config):
     return totals
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Helpers de limpieza / consulta
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def truncate_data(conn):
     cur = conn.cursor()
@@ -696,7 +697,7 @@ def db_summary(conn):
     ]
     log.info("\n  Estado actual de la base de datos:")
     log.info(f"  {'Tabla':<25} {'Registros':>12}")
-    log.info(f"  {'─'*25} {'─'*12}")
+    log.info(f"  {'-'*25} {'-'*12}")
     for name, sql in tables:
         cur.execute(sql)
         count = cur.fetchone()[0]
@@ -714,9 +715,9 @@ def db_summary(conn):
     cur.close()
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Datasets configurados (desde ingest_config.py)
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 def _make_loader(config):
     """Genera un loader(conn) a partir de un config dict."""
@@ -738,21 +739,71 @@ def _make_loader(config):
     return loader
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Loader custom: Alimentar (cruce menores + titulares)
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
+
+def _clean_monto_expr(col_name):
+    """Expresion Polars para limpiar monto con deteccion automatica de formato.
+    punto+coma=argentino, solo coma=decimal, solo punto=estandar."""
+    raw = pl.col(col_name).cast(pl.Utf8).str.replace_all(r"[^0-9,.\-]", "")
+    hc = raw.str.contains(",")
+    hd = raw.str.contains(r"\.")
+    return (
+        pl.when(hc & hd).then(raw.str.replace_all(r"\.", "").str.replace(",", "."))
+          .when(hc).then(raw.str.replace(",", "."))
+          .otherwise(raw)
+    )
+
+
+def _copy_csv_to_temp(conn, csv_path, table_name, columns, separator=",",
+                      select_exprs=None):
+    """Lee CSV en chunks con Polars, COPY a tabla temporal de PG via StringIO."""
+    cur = conn.cursor()
+    col_defs = ", ".join(f"{c} text" for c in columns)
+    cur.execute(f"DROP TABLE IF EXISTS {table_name}")
+    cur.execute(f"CREATE TEMP TABLE {table_name} ({col_defs})")
+
+    reader = pl.read_csv_batched(
+        csv_path, separator=separator,
+        infer_schema_length=0, encoding="utf8-lossy",
+        batch_size=CHUNK_SIZE
+    )
+    total = 0
+    while True:
+        batches = reader.next_batches(1)
+        if batches is None:
+            break
+        chunk = batches[0]
+        if len(chunk) == 0:
+            break
+        if select_exprs:
+            chunk = chunk.select(select_exprs)
+        else:
+            chunk = chunk.select(columns)
+        buf = io.StringIO()
+        chunk.write_csv(buf, include_header=False)
+        buf.seek(0)
+        cur.copy_expert(f"COPY {table_name} FROM STDIN CSV", buf)
+        total += len(chunk)
+
+    conn.commit()
+    cur.close()
+    return total
+
 
 def load_alimentar(conn):
     """
     Ingesta Alimentar: cruza menores con titulares para prorratear monto.
+    Usa tablas temporales de PostgreSQL para el JOIN pesado (~100MB RAM Python).
 
     Flujo:
-      1. Contar menores por (cuil_titular, periodo) → count_dict
-      2. Leer titulares, calcular monto_per_menor → titular_lookup
-      3. Leer menores en chunks, enriquecer con titular_lookup → clean → write
-      4. Procesar titulares con prenatal=1 como beneficiarios adicionales
+      1. COPY menores y titulares a temp tables de PG (chunks via StringIO)
+      2. CREATE INDEX + counts en PG
+      3. Server-side cursor: JOIN menores+titulares+counts → fetch → clean → write
+      4. Prenatal: titulares con prenatal=1 como beneficiarios (cursor separado)
+      5. DROP temp tables
     """
-    # Buscar config de ALIMENTAR
     alim_config = next(c for c in DATASET_CONFIGS if c.get("loader") == "load_alimentar")
     col_map = alim_config["col_map"]
     defaults = alim_config.get("defaults", {})
@@ -761,18 +812,18 @@ def load_alimentar(conn):
     titulares_path = os.path.join(DATASETS_ROOT, alim_config["titulares_path"])
 
     if not os.path.exists(menores_path):
-        log.warning(f"  No se encontró archivo de menores: {menores_path}")
+        log.warning(f"  No se encontro archivo de menores: {menores_path}")
         return
     if not os.path.exists(titulares_path):
-        log.warning(f"  No se encontró archivo de titulares: {titulares_path}")
+        log.warning(f"  No se encontro archivo de titulares: {titulares_path}")
         return
 
     t0 = time.time()
-    log.info(f"\n{'─'*55}")
-    log.info(f"  ALIMENTAR — Cruce menores + titulares")
+    log.info(f"\n{'-'*55}")
+    log.info(f"  ALIMENTAR -- Cruce menores + titulares (PG temp tables)")
     log.info(f"  Menores:   {menores_path}")
     log.info(f"  Titulares: {titulares_path}")
-    log.info(f"{'─'*55}")
+    log.info(f"{'-'*55}")
 
     prog = defaults.get("programa", "Tarjeta Alimentar")
     sec = defaults.get("secretaria", "Secretaria de Inclusion Social")
@@ -780,183 +831,191 @@ def load_alimentar(conn):
     cache = IngestCache(conn)
     _ensure_program(conn, cache, prog, sec)
 
-    # ── Paso 1: contar menores por (cuil_titular, periodo) ──
-    log.info("  Paso 1: contando menores por titular+periodo...")
-    counts_df = (
-        pl.scan_csv(menores_path, infer_schema_length=0, encoding="utf8-lossy")
-        .group_by(["cuil_titular", "periodo"])
-        .agg(pl.count().alias("n"))
-        .collect()
-    )
-    count_dict = {
-        (r["cuil_titular"], r["periodo"]): r["n"]
-        for r in counts_df.to_dicts()
-    }
-    log.info(f"    {len(count_dict):,} combinaciones titular+periodo")
+    cur = conn.cursor()
 
-    # ── Paso 2: cargar titulares y calcular monto proporcional ──
-    log.info("  Paso 2: cargando titulares y calculando prorrateo...")
-    titulares_df = pl.read_csv(
-        titulares_path, separator=";",
-        infer_schema_length=0, encoding="utf8-lossy"
-    )
-    log.info(f"    {len(titulares_df):,} filas en titulares")
+    try:
+        # ── Fase 1: COPY a temp tables ──
+        log.info("  Fase 1: cargando menores a tabla temporal...")
+        menores_cols = ["cuil_beneficiario", "cuil_titular",
+                        "apellido_nombre_beneficiario",
+                        "fecha_nacimiento_beneficiario",
+                        "sexo_beneficiario", "periodo"]
+        n_men = _copy_csv_to_temp(conn, menores_path, "_alim_menores",
+                                  menores_cols, separator=",")
+        log.info(f"    {n_men:,} filas copiadas ({time.time()-t0:.0f}s)")
 
-    # Limpiar monto_titular: formato argentino
-    monto_clean = (
-        pl.col("monto_titular").cast(pl.Utf8)
-        .str.replace_all(r"[^0-9,.\-]", "")
-        .str.replace_all(r"\.", "")
-        .str.replace(",", ".")
-    )
-    titulares_df = titulares_df.with_columns(
-        monto_clean.cast(pl.Float64, strict=False).fill_null(0.0).alias("_monto_f"),
-        pl.col("prenatal").cast(pl.Utf8).str.strip_chars().cast(pl.Int64, strict=False).fill_null(0).alias("_prenatal"),
-        pl.col("periodo").cast(pl.Utf8).str.strip_chars().alias("periodo"),
-        pl.col("cuil_titular").cast(pl.Utf8).str.strip_chars().alias("cuil_titular"),
-    )
+        log.info("  Fase 1: cargando titulares a tabla temporal...")
+        tit_cols = ["cuil_titular", "apellido_nombre_titular",
+                    "fecha_nacimiento_titular", "sexo_titular",
+                    "provincia_titular", "prenatal", "monto_titular", "periodo"]
+        tit_select = [
+            pl.col("cuil_titular").cast(pl.Utf8).str.strip_chars(),
+            pl.col("apellido_nombre_titular"),
+            pl.col("fecha_nacimiento_titular"),
+            pl.col("sexo_titular"),
+            pl.col("provincia_titular").cast(pl.Utf8).str.strip_chars(),
+            pl.col("prenatal").cast(pl.Utf8).str.strip_chars(),
+            _clean_monto_expr("monto_titular").alias("monto_titular"),
+            pl.col("periodo").cast(pl.Utf8).str.strip_chars(),
+        ]
+        n_tit = _copy_csv_to_temp(conn, titulares_path, "_alim_titulares",
+                                  tit_cols, separator=";",
+                                  select_exprs=tit_select)
+        log.info(f"    {n_tit:,} filas copiadas ({time.time()-t0:.0f}s)")
 
-    # Construir lookup: {(cuil_titular, periodo): {provincia, monto_per_menor, prenatal, ...}}
-    titular_lookup = {}
-    warn_no_menores = 0
-    for row in titulares_df.to_dicts():
-        cuil_tit = row["cuil_titular"]
-        periodo = row["periodo"]
-        prenatal = row["_prenatal"]
-        monto = row["_monto_f"]
+        # ── Fase 2: Indexes + counts ──
+        log.info("  Fase 2: creando indices y contando hijos...")
+        cur.execute("CREATE INDEX ON _alim_menores(cuil_titular, periodo)")
+        cur.execute("CREATE INDEX ON _alim_titulares(cuil_titular, periodo)")
+        cur.execute("""
+            CREATE TEMP TABLE _alim_counts AS
+            SELECT cuil_titular, periodo, COUNT(*)::int AS n
+            FROM _alim_menores
+            GROUP BY cuil_titular, periodo
+        """)
+        cur.execute("CREATE INDEX ON _alim_counts(cuil_titular, periodo)")
+        conn.commit()
+        log.info(f"    Indices y counts creados ({time.time()-t0:.0f}s)")
 
-        n_menores = count_dict.get((cuil_tit, periodo), 0)
-        divisor = n_menores + (1 if prenatal else 0)
-
-        if divisor == 0:
-            warn_no_menores += 1
-            continue  # titular sin menores y sin prenatal → no se registra nadie
-
-        monto_per_menor = round(monto / divisor, 2)
-        titular_lookup[(cuil_tit, periodo)] = {
-            "provincia": (row.get("provincia_titular") or "").strip(),
-            "monto_per_menor": monto_per_menor,
-            "prenatal": prenatal,
-            "nombre_titular": (row.get("apellido_nombre_titular") or "").strip(),
-            "fecha_nac_titular": (row.get("fecha_nacimiento_titular") or "").strip(),
-            "sexo_titular": (row.get("sexo_titular") or "").strip(),
-        }
-
-    if warn_no_menores:
-        log.info(f"    Titulares sin menores ni prenatal (ignorados): {warn_no_menores:,}")
-    log.info(f"    {len(titular_lookup):,} entradas en titular_lookup")
-
-    # ── Paso 3: procesar menores en chunks ──
-    log.info("  Paso 3: procesando menores...")
-    if MAX_ROWS > 0:
-        log.info(f"  *** MODO TEST: límite de {MAX_ROWS:,} filas ***")
-
-    reader = pl.read_csv_batched(
-        menores_path, infer_schema_length=0,
-        encoding="utf8-lossy", batch_size=CHUNK_SIZE
-    )
-
-    totals = _empty_totals()
-    chunk_num = 0
-    warn_no_titular = 0
-
-    while True:
-        batches = reader.next_batches(1)
-        if batches is None:
-            break
-        raw_chunk = batches[0]
-        if len(raw_chunk) == 0:
-            break
-
-        chunk_num += 1
-
-        # Limitar filas en modo test
+        # ── Fase 3: Fetch menores enriquecidos (server-side cursor) ──
+        log.info("  Fase 3: procesando menores (server-side cursor)...")
         if MAX_ROWS > 0:
-            remaining = MAX_ROWS - totals["rows"]
-            if remaining <= 0:
+            log.info(f"  *** MODO TEST: limite de {MAX_ROWS:,} filas ***")
+
+        totals = _empty_totals()
+        chunk_num = 0
+
+        srv_cur = conn.cursor(name="alim_menores_cur")
+        srv_cur.itersize = CHUNK_SIZE
+        srv_cur.execute("""
+            SELECT m.cuil_beneficiario,
+                   m.apellido_nombre_beneficiario,
+                   m.fecha_nacimiento_beneficiario,
+                   m.sexo_beneficiario,
+                   m.periodo,
+                   COALESCE(t.provincia_titular, ''),
+                   COALESCE(
+                       ROUND(t.monto_titular::numeric
+                             / NULLIF(c.n + COALESCE(t.prenatal::int, 0), 0), 2),
+                       0
+                   )::text
+            FROM _alim_menores m
+            LEFT JOIN _alim_titulares t
+                ON m.cuil_titular = t.cuil_titular AND m.periodo = t.periodo
+            LEFT JOIN _alim_counts c
+                ON t.cuil_titular = c.cuil_titular AND t.periodo = c.periodo
+        """)
+
+        while True:
+            rows = srv_cur.fetchmany(CHUNK_SIZE)
+            if not rows:
                 break
-            if len(raw_chunk) > remaining:
-                raw_chunk = raw_chunk.head(remaining)
+            chunk_num += 1
 
-        # Split apellido_nombre_beneficiario
-        raw_chunk = _split_apellido_nombre(raw_chunk, "apellido_nombre_beneficiario")
+            if MAX_ROWS > 0:
+                remaining = MAX_ROWS - totals["rows"]
+                if remaining <= 0:
+                    break
+                rows = rows[:remaining]
 
-        # Enriquecer cada fila con datos del titular
-        rows = raw_chunk.to_dicts()
-        enriched = []
-        for row in rows:
-            cuil_tit = (row.get("cuil_titular") or "").strip()
-            periodo = (row.get("periodo") or "").strip()
-            tit = titular_lookup.get((cuil_tit, periodo))
-            enriched.append({
-                "cuil": row.get("cuil_beneficiario", ""),
-                "nombre": row.get("_nombre", "S/D"),
-                "apellido": row.get("_apellido", "S/D"),
-                "sexo": row.get("sexo_beneficiario", ""),
-                "fecha_nacimiento": row.get("fecha_nacimiento_beneficiario", ""),
-                "provincia": tit["provincia"] if tit else "",
-                "monto": str(tit["monto_per_menor"]) if tit else "0",
-                "periodo": periodo,
-            })
-            if not tit:
-                warn_no_titular += 1
-
-        enriched_df = pl.DataFrame(enriched)
-
-        # Pipeline estándar: clean → write
-        clean = clean_chunk(enriched_df, col_map, defaults)
-        stats = write_chunk(conn, cache, clean, prog, sec)
-
-        for k in totals:
-            totals[k] += stats.get(k, 0)
-
-        elapsed = time.time() - t0
-        rate = totals["rows"] / elapsed if elapsed > 0 else 0
-        log.info(f"  Chunk {chunk_num}: {totals['rows']:,} filas [{rate:,.0f}/s]"
-                 f"  ben={totals['ben_new']:,} benf={totals['benefits_new']:,}"
-                 f" pay={totals['pay_new']:,}")
-
-    if warn_no_titular:
-        log.warning(f"  Menores sin titular encontrado: {warn_no_titular:,}")
-
-    # ── Paso 4: titulares con prenatal=1 como beneficiarios ──
-    prenatal_rows = [
-        v | {"cuil_titular": k[0], "periodo": k[1]}
-        for k, v in titular_lookup.items()
-        if v["prenatal"] == 1
-    ]
-    if prenatal_rows:
-        log.info(f"  Paso 4: procesando {len(prenatal_rows):,} titulares con prenatal...")
-        prenatal_data = []
-        for row in prenatal_rows:
-            # Split nombre del titular
-            nombre_full = row["nombre_titular"]
-            parts = nombre_full.split(None, 1)
-            apellido = parts[0] if parts else "S/D"
-            nombre = parts[1] if len(parts) > 1 else "S/D"
-            prenatal_data.append({
-                "cuil": row["cuil_titular"],
-                "nombre": nombre,
-                "apellido": apellido,
-                "sexo": row["sexo_titular"],
-                "fecha_nacimiento": row["fecha_nac_titular"],
-                "provincia": row["provincia"],
-                "monto": str(row["monto_per_menor"]),
-                "periodo": row["periodo"],
+            df = pl.DataFrame({
+                "cuil": [r[0] for r in rows],
+                "apellido_nombre": [r[1] for r in rows],
+                "fecha_nacimiento": [r[2] for r in rows],
+                "sexo": [r[3] for r in rows],
+                "periodo": [r[4] for r in rows],
+                "provincia": [r[5] for r in rows],
+                "monto": [r[6] for r in rows],
             })
 
-        # Procesar en sub-chunks
-        prenatal_df = pl.DataFrame(prenatal_data)
-        for offset in range(0, len(prenatal_df), CHUNK_SIZE):
-            chunk = prenatal_df.slice(offset, CHUNK_SIZE)
-            clean = clean_chunk(chunk, col_map, defaults)
+            df = _split_apellido_nombre(df, "apellido_nombre")
+            df = df.select([
+                "cuil",
+                pl.col("_nombre").alias("nombre"),
+                pl.col("_apellido").alias("apellido"),
+                "sexo", "fecha_nacimiento", "provincia", "monto", "periodo",
+            ])
+
+            clean = clean_chunk(df, col_map, defaults)
             stats = write_chunk(conn, cache, clean, prog, sec)
             for k in totals:
                 totals[k] += stats.get(k, 0)
 
-        log.info(f"    Prenatal: {len(prenatal_rows):,} titulares procesados")
+            elapsed = time.time() - t0
+            rate = totals["rows"] / elapsed if elapsed > 0 else 0
+            log.info(f"  Chunk {chunk_num}: {totals['rows']:,} filas [{rate:,.0f}/s]"
+                     f"  ben={totals['ben_new']:,} benf={totals['benefits_new']:,}"
+                     f" pay={totals['pay_new']:,}")
 
-    # ── Resumen final ──
+        srv_cur.close()
+
+        # ── Fase 4: Prenatal (titulares con prenatal=1 como beneficiarios) ──
+        log.info("  Fase 4: procesando titulares con prenatal...")
+        srv_cur2 = conn.cursor(name="alim_prenatal_cur")
+        srv_cur2.itersize = CHUNK_SIZE
+        srv_cur2.execute("""
+            SELECT t.cuil_titular,
+                   t.apellido_nombre_titular,
+                   t.fecha_nacimiento_titular,
+                   t.sexo_titular,
+                   t.provincia_titular,
+                   ROUND(t.monto_titular::numeric
+                         / NULLIF(c.n + 1, 0), 2)::text,
+                   t.periodo
+            FROM _alim_titulares t
+            JOIN _alim_counts c
+                ON t.cuil_titular = c.cuil_titular AND t.periodo = c.periodo
+            WHERE t.prenatal::int = 1
+        """)
+
+        n_prenatal = 0
+        while True:
+            rows = srv_cur2.fetchmany(CHUNK_SIZE)
+            if not rows:
+                break
+            n_prenatal += len(rows)
+
+            df = pl.DataFrame({
+                "cuil": [r[0] for r in rows],
+                "apellido_nombre": [r[1] for r in rows],
+                "fecha_nacimiento": [r[2] for r in rows],
+                "sexo": [r[3] for r in rows],
+                "provincia": [r[4] for r in rows],
+                "monto": [r[5] for r in rows],
+                "periodo": [r[6] for r in rows],
+            })
+
+            df = _split_apellido_nombre(df, "apellido_nombre")
+            df = df.select([
+                "cuil",
+                pl.col("_nombre").alias("nombre"),
+                pl.col("_apellido").alias("apellido"),
+                "sexo", "fecha_nacimiento", "provincia", "monto", "periodo",
+            ])
+
+            clean = clean_chunk(df, col_map, defaults)
+            stats = write_chunk(conn, cache, clean, prog, sec)
+            for k in totals:
+                totals[k] += stats.get(k, 0)
+
+        srv_cur2.close()
+        if n_prenatal:
+            log.info(f"    Prenatal: {n_prenatal:,} titulares procesados")
+
+    finally:
+        # ── Cleanup: drop temp tables ──
+        for tbl in ("_alim_counts", "_alim_titulares", "_alim_menores"):
+            try:
+                cur.execute(f"DROP TABLE IF EXISTS {tbl}")
+            except Exception:
+                pass
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        cur.close()
+
+    # -- Resumen final --
     elapsed = time.time() - t0
     log.info(f"\n  Ingesta ALIMENTAR completada en {elapsed:.1f}s")
     log.info(f"  {'Filas procesadas:':<30} {totals['rows']:>10,}")
@@ -965,7 +1024,7 @@ def load_alimentar(conn):
     log.info(f"  {'Benefits omitidos (dup):':<30} {totals['benefits_skip']:>10,}")
     log.info(f"  {'Pagos nuevos:':<30} {totals['pay_new']:>10,}")
     log.info(f"  {'Pagos omitidos (dup):':<30} {totals['pay_skip']:>10,}")
-    log.info(f"  {'CUIL inválidos:':<30} {totals['cuil_invalido']:>10,}")
+    log.info(f"  {'CUIL invalidos:':<30} {totals['cuil_invalido']:>10,}")
     log.info(f"  {'Errores:':<30} {totals['errores']:>10,}")
 
     log_report(log, "ALIMENTAR", totals, elapsed, _log_path)
@@ -984,9 +1043,9 @@ for _c in DATASET_CONFIGS:
         DATASETS.append((_c["name"], _c["description"], _make_loader(_c)))
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Menú interactivo
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 _log_path = None  # se setea en menu()
 
@@ -1024,9 +1083,20 @@ def menu():
             print("\n  Datasets disponibles:")
             for i, (name, desc, _) in enumerate(DATASETS, 1):
                 print(f"    [{i}] {name} — {desc}")
+            if len(DATASETS) > 1:
+                print(f"    [T] Cargar TODOS")
             print(f"    [0] Volver")
             sel = input("\n  Seleccionar dataset: ").strip()
             if sel == "0" or not sel:
+                continue
+            if sel.upper() == "T":
+                confirm = input(f"  Cargar los {len(DATASETS)} datasets? (s/n): ").strip()
+                if confirm.lower() == "s":
+                    for name, desc, loader in DATASETS:
+                        log.info(f"\n  Cargando: {name}...")
+                        loader(conn)
+                        log.info(f"  Carga de {name} completada.")
+                    log.info(f"\n  Todos los datasets cargados.")
                 continue
             try:
                 idx = int(sel) - 1
