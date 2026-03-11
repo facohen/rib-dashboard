@@ -1,0 +1,133 @@
+12:57:32 
+=======================================================
+12:57:32   RUB — Ingesta de Datasets
+12:57:32   DB: localhost/rub
+12:57:32   Log: C:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_125732.log
+12:57:32 =======================================================
+12:57:37   Tablas de datos truncadas.
+12:57:45 
+  Cargando: VOUCHERS...
+12:57:45   Archivos encontrados: 1
+12:57:45 
+───────────────────────────────────────────────────────
+12:57:45   Ingestando: C:\Users\fcohen\repos\rub-dashboard\datasets\RUB\VOUCHERS\vouchers_liquidaciones_202603102019.csv
+12:57:45 ───────────────────────────────────────────────────────
+12:57:45   Columnas CSV: ['pe_liqui', 'cuil_adulto', 'cuil_menor', 'monto', 'ape_nom_menor']
+12:57:45   *** MODO TEST: límite de 50,000 filas ***
+12:57:45   Cache cargado (0.0s):
+12:57:45     0 secretarías, 0 programas
+12:57:45     0 CUILs, 0 benefits, 0 pagos
+12:57:45     + Secretaría: 'Secretaría de Inclusión Social' (id=1)
+12:57:45     + Programa: 'Vouchers' (id=1)
+12:57:48   Chunk 1: 50,000 filas [13,046/s]  ben=50,000 benf=50,000 pay=50,000
+12:57:48 
+  Ingesta completada en 3.8s
+12:57:48   Filas procesadas:                  50,000
+12:57:48   Beneficiarios nuevos:              50,000
+12:57:48   Benefits nuevos:                   50,000
+12:57:48   Benefits omitidos (dup):                0
+12:57:48   Pagos nuevos:                      50,000
+12:57:48   Pagos omitidos (dup):                   0
+12:57:48   CUIL inválidos:                         0
+12:57:48   Errores:                                0
+12:57:48 =======================================================
+12:57:48   REPORTE DE INGESTA
+12:57:48 =======================================================
+12:57:48   Dataset:                       VOUCHERS
+12:57:48   Rows:                                50,000
+12:57:48   Ben new:                             50,000
+12:57:48   Ben upd:                                  0
+12:57:48   Benefits new:                        50,000
+12:57:48   Benefits skip:                            0
+12:57:48   Pay new:                             50,000
+12:57:48   Pay skip:                                 0
+12:57:48   Cuil invalido:                            0
+12:57:48   Errores:                                  0
+12:57:48   Tiempo total:                          3.9s
+12:57:48   Log guardado en:               C:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_125732.log
+12:57:48 =======================================================
+12:57:48   Carga de VOUCHERS completada.
+12:57:53 
+  Cargando: BECAS_BELGRANO...
+12:57:53   Archivos encontrados: 1
+12:57:53 
+───────────────────────────────────────────────────────
+12:57:53   Ingestando: C:\Users\fcohen\repos\rub-dashboard\datasets\RUB\BECAS BELGRANO/becas_belgrano.csv
+12:57:53 ───────────────────────────────────────────────────────
+12:57:53   Columnas CSV: ['cuit', 'apellido', 'nombre', 'sexo', 'provincia', 'fecha_nacimiento', 'monto_liquidado', 'periodo_liquidado']
+12:57:53   *** MODO TEST: límite de 50,000 filas ***
+12:57:53   Cache cargado (0.1s):
+12:57:53     1 secretarías, 1 programas
+12:57:53     50,000 CUILs, 50,000 benefits, 50,000 pagos
+12:57:53     + Secretaría: 'Secretaría de Educación' (id=2)
+12:57:53     + Programa: 'Becas Belgrano' (id=2)
+12:57:57   Chunk 1: 50,000 filas [11,797/s]  ben=35,983 benf=50,000 pay=50,000
+12:57:57 
+  Ingesta completada en 4.2s
+12:57:57   Filas procesadas:                  50,000
+12:57:57   Beneficiarios nuevos:              35,983
+12:57:57   Benefits nuevos:                   50,000
+12:57:57   Benefits omitidos (dup):                0
+12:57:57   Pagos nuevos:                      50,000
+12:57:57   Pagos omitidos (dup):                   0
+12:57:57   CUIL inválidos:                         0
+12:57:57   Errores:                                0
+12:57:57 =======================================================
+12:57:57   REPORTE DE INGESTA
+12:57:57 =======================================================
+12:57:57   Dataset:                       BECAS_BELGRANO
+12:57:57   Rows:                                50,000
+12:57:57   Ben new:                             35,983
+12:57:57   Ben upd:                                  0
+12:57:57   Benefits new:                        50,000
+12:57:57   Benefits skip:                            0
+12:57:57   Pay new:                             50,000
+12:57:57   Pay skip:                                 0
+12:57:57   Cuil invalido:                            0
+12:57:57   Errores:                                  0
+12:57:57   Tiempo total:                          4.3s
+12:57:57   Log guardado en:               C:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_125732.log
+12:57:57 =======================================================
+12:57:57   Carga de BECAS_BELGRANO completada.
+12:58:00 
+  Cargando: STESS...
+12:58:00   Archivos encontrados: 1
+12:58:00 
+───────────────────────────────────────────────────────
+12:58:00   Ingestando: C:\Users\fcohen\repos\rub-dashboard\datasets\RUB\STESS\stess_202603101919.csv
+12:58:00 ───────────────────────────────────────────────────────
+12:58:00   Columnas CSV: ['periodo_liquidado', 'liqui_plan', 'provincia_cod', 'cuil', 'apellido_y_nombre', 'fecha_nacimiento', 'sexo', 'importe_total', 'provincia_desc']
+12:58:00   *** MODO TEST: límite de 50,000 filas ***
+12:58:00   Cache cargado (0.2s):
+12:58:00     2 secretarías, 2 programas
+12:58:00     85,983 CUILs, 100,000 benefits, 100,000 pagos
+12:58:00     + Secretaría: 'Secretaría de Trabajo' (id=3)
+12:58:00     + Programa: 'STESS' (id=3)
+12:58:04   Chunk 1: 50,000 filas [12,229/s]  ben=48,106 benf=48,760 pay=48,274
+12:58:04 
+  Ingesta completada en 4.1s
+12:58:04   Filas procesadas:                  50,000
+12:58:04   Beneficiarios nuevos:              48,106
+12:58:04   Benefits nuevos:                   48,760
+12:58:04   Benefits omitidos (dup):            1,240
+12:58:04   Pagos nuevos:                      48,274
+12:58:04   Pagos omitidos (dup):               1,203
+12:58:04   CUIL inválidos:                         0
+12:58:04   Errores:                                0
+12:58:04 =======================================================
+12:58:04   REPORTE DE INGESTA
+12:58:04 =======================================================
+12:58:04   Dataset:                       STESS
+12:58:04   Rows:                                50,000
+12:58:04   Ben new:                             48,106
+12:58:04   Ben upd:                                  0
+12:58:04   Benefits new:                        48,760
+12:58:04   Benefits skip:                        1,240
+12:58:04   Pay new:                             48,274
+12:58:04   Pay skip:                             1,203
+12:58:04   Cuil invalido:                            0
+12:58:04   Errores:                                  0
+12:58:04   Tiempo total:                          4.2s
+12:58:04   Log guardado en:               C:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_125732.log
+12:58:04 =======================================================
+12:58:04   Carga de STESS completada.

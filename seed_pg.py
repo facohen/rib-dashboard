@@ -115,6 +115,7 @@ DROP TABLE IF EXISTS payments CASCADE;
 DROP TABLE IF EXISTS benefits CASCADE;
 DROP TABLE IF EXISTS incompatibility_rules CASCADE;
 DROP TABLE IF EXISTS programs CASCADE;
+DROP TABLE IF EXISTS secretarias CASCADE;
 DROP TABLE IF EXISTS beneficiaries CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
@@ -124,6 +125,11 @@ CREATE TABLE users (
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
     nombre TEXT
+);
+
+CREATE TABLE secretarias (
+    id SERIAL PRIMARY KEY,
+    nombre TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE beneficiaries (
@@ -142,7 +148,7 @@ CREATE TABLE beneficiaries (
 
 CREATE TABLE programs (
     id SERIAL PRIMARY KEY,
-    secretaria_origen TEXT NOT NULL,
+    secretaria_id INTEGER NOT NULL REFERENCES secretarias(id),
     nombre_programa TEXT NOT NULL
 );
 
@@ -208,7 +214,7 @@ def run(num_beneficiaries=8_000_000):
 
     # ── Truncar tablas para nueva distribución ──
     print("🗑️  Truncando tablas...")
-    cur.execute("TRUNCATE payments, benefits, incompatibility_rules, programs, beneficiaries, users RESTART IDENTITY CASCADE")
+    cur.execute("TRUNCATE payments, benefits, incompatibility_rules, programs, secretarias, beneficiaries, users RESTART IDENTITY CASCADE")
     conn.commit()
 
     # ── Usuarios ──
@@ -219,11 +225,19 @@ def run(num_beneficiaries=8_000_000):
     conn.commit()
     print("  ✅ Usuarios creados")
 
+    # ── Secretarías ──
+    sec_ids = []
+    for sec_nombre in SECRETARIAS:
+        cur.execute("INSERT INTO secretarias(nombre) VALUES(%s) RETURNING id", (sec_nombre,))
+        sec_ids.append(cur.fetchone()[0])
+    conn.commit()
+    print(f"  ✅ Secretarías creadas: {len(sec_ids)}")
+
     # ── Programas ──
     prog_ids = []
     for nombre, sec_idx in PROGRAMAS:
-        cur.execute("INSERT INTO programs(secretaria_origen,nombre_programa) VALUES(%s,%s) RETURNING id",
-                    (SECRETARIAS[sec_idx], nombre))
+        cur.execute("INSERT INTO programs(secretaria_id,nombre_programa) VALUES(%s,%s) RETURNING id",
+                    (sec_ids[sec_idx], nombre))
         prog_ids.append(cur.fetchone()[0])
     conn.commit()
     print(f"  ✅ Programas creados: {len(prog_ids)}")

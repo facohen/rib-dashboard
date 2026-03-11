@@ -1,0 +1,32 @@
+12:06:10 
+=======================================================
+12:06:10   RUB — Ingesta de Datasets
+12:06:10   DB: localhost/rub
+12:06:10   Log: C:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_120610.log
+12:06:10 =======================================================
+12:06:15 
+  Estado actual de la base de datos:
+12:06:15   Tabla                        Registros
+12:06:15   ───────────────────────── ────────────
+12:06:15   secretarias                          3
+12:06:15   programs                             3
+12:06:15   beneficiaries                        8
+12:06:15   benefits                            10
+12:06:15   payments                            10
+12:06:15   incompatibility_rules                0
+12:06:15   users                                2
+12:06:15 
+  Periodos (1):
+12:06:15     2026-03: 10 benefits
+12:06:32   Tablas de datos truncadas.
+12:06:34 
+  Estado actual de la base de datos:
+12:06:34   Tabla                        Registros
+12:06:34   ───────────────────────── ────────────
+12:06:34   secretarias                          0
+12:06:34   programs                             0
+12:06:34   beneficiaries                        0
+12:06:34   benefits                             0
+12:06:34   payments                             0
+12:06:34   incompatibility_rules                0
+12:06:34   users                                2

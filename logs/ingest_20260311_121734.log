@@ -1,0 +1,51 @@
+12:17:34 
+=======================================================
+12:17:34   RUB — Ingesta de Datasets
+12:17:34   DB: localhost/rub
+12:17:34   Log: C:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_121734.log
+12:17:34 =======================================================
+12:17:39 
+  Cargando: VOUCHERS...
+12:17:39   Archivos encontrados: 1
+12:17:39 
+───────────────────────────────────────────────────────
+12:17:39   Ingestando: C:\Users\fcohen\repos\rub-dashboard\datasets\RUB\VOUCHERS\vouchers_liquidaciones_202603102019.csv
+12:17:39 ───────────────────────────────────────────────────────
+12:17:39   Columnas CSV: ['pe_liqui', 'cuil_adulto', 'cuil_menor', 'monto', 'ape_nom_menor']
+12:17:51   Cache cargado (12.0s):
+12:17:51     1 secretarías, 1 programas
+12:17:51     991,514 CUILs, 6,600,000 benefits, 6,400,000 pagos
+12:17:52   Chunk 1: 200,000 filas [15,848/s]  ben=0 benf=0 pay=0
+12:17:52   Chunk 2: 400,000 filas [30,343/s]  ben=0 benf=0 pay=0
+12:17:53   Chunk 3: 600,000 filas [43,732/s]  ben=0 benf=0 pay=0
+12:17:53   Chunk 4: 800,000 filas [56,069/s]  ben=0 benf=0 pay=0
+12:17:54   Chunk 5: 1,000,000 filas [67,388/s]  ben=0 benf=0 pay=0
+12:17:54   Chunk 6: 1,200,000 filas [77,911/s]  ben=0 benf=0 pay=0
+12:17:55   Chunk 7: 1,400,000 filas [87,732/s]  ben=0 benf=0 pay=0
+12:17:56   Chunk 8: 1,600,000 filas [96,971/s]  ben=0 benf=0 pay=0
+12:17:56   Chunk 9: 1,800,000 filas [105,452/s]  ben=0 benf=0 pay=0
+12:17:57   Chunk 10: 2,000,000 filas [113,460/s]  ben=0 benf=0 pay=0
+12:17:57   Chunk 11: 2,200,000 filas [120,958/s]  ben=0 benf=0 pay=0
+12:17:58   Chunk 12: 2,400,000 filas [128,056/s]  ben=0 benf=0 pay=0
+12:17:58   Chunk 13: 2,600,000 filas [134,720/s]  ben=0 benf=0 pay=0
+12:17:59   Chunk 14: 2,800,000 filas [140,896/s]  ben=0 benf=0 pay=0
+12:17:59   Chunk 15: 3,000,000 filas [146,986/s]  ben=0 benf=0 pay=0
+12:18:00   Chunk 16: 3,200,000 filas [152,384/s]  ben=0 benf=0 pay=0
+12:18:01   Chunk 17: 3,400,000 filas [157,726/s]  ben=0 benf=0 pay=0
+12:18:01   Chunk 18: 3,600,000 filas [162,708/s]  ben=0 benf=0 pay=0
+12:18:02   Chunk 19: 3,800,000 filas [167,484/s]  ben=0 benf=0 pay=0
+12:18:02   Chunk 20: 4,000,000 filas [172,049/s]  ben=0 benf=0 pay=0
+12:18:03   Chunk 21: 4,200,000 filas [176,354/s]  ben=0 benf=0 pay=0
+12:18:03   Chunk 22: 4,400,000 filas [180,330/s]  ben=0 benf=0 pay=0
+12:18:04   Chunk 23: 4,600,000 filas [184,247/s]  ben=0 benf=0 pay=0
+12:18:05   Chunk 24: 4,800,000 filas [188,018/s]  ben=0 benf=0 pay=0
+12:18:05   Chunk 25: 5,000,000 filas [191,511/s]  ben=0 benf=0 pay=0
+12:18:06   Chunk 26: 5,200,000 filas [195,038/s]  ben=0 benf=0 pay=0
+12:18:06   Chunk 27: 5,400,000 filas [198,316/s]  ben=0 benf=0 pay=0
+12:18:07   Chunk 28: 5,600,000 filas [201,504/s]  ben=0 benf=0 pay=0
+12:18:07   Chunk 29: 5,800,000 filas [204,453/s]  ben=0 benf=0 pay=0
+12:18:08   Chunk 30: 6,000,000 filas [207,396/s]  ben=0 benf=0 pay=0
+12:18:09   Chunk 31: 6,200,000 filas [210,087/s]  ben=0 benf=0 pay=0
+12:18:09   Chunk 32: 6,400,000 filas [212,675/s]  ben=0 benf=0 pay=0
+12:18:16   Chunk 33: 6,600,000 filas [179,864/s]  ben=0 benf=0 pay=200,000
+12:18:29   Chunk 34: 6,800,000 filas [135,590/s]  ben=0 benf=200,000 pay=400,000

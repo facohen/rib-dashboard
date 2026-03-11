@@ -36,7 +36,7 @@ _GRUPO_RANGES = {
 }
 
 
-def _apply_filters(filters, corte=None, has_ben=False, has_prog=False):
+def _apply_filters(filters, corte=None, has_ben=False, has_prog=False, has_sec=False):
     """Build extra JOINs, WHERE clauses and params from cross-chart filters.
 
     Returns (join_sql, where_parts, params).
@@ -57,7 +57,9 @@ def _apply_filters(filters, corte=None, has_ben=False, has_prog=False):
         joins.append("JOIN programs p ON b.program_id=p.id")
 
     if filters.get("secretaria"):
-        where.append("p.secretaria_origen=%s")
+        if not has_sec:
+            joins.append("JOIN secretarias sec ON p.secretaria_id=sec.id")
+        where.append("sec.nombre=%s")
         params.append(filters["secretaria"])
     if filters.get("sexo"):
         where.append("ben.sexo=%s")
@@ -264,14 +266,15 @@ def get_summary(conn, period, filters=None):
 def get_by_secretaria(conn, period, filters=None, metric="beneficiarios"):
     corte = _corte_date(period)
     sel, pay_join = _metric_expr(metric)
-    fj, fw, fp = _apply_filters(filters, corte, has_ben=False, has_prog=True)
+    fj, fw, fp = _apply_filters(filters, corte, has_ben=False, has_prog=True, has_sec=True)
     extra = (" AND " + " AND ".join(fw)) if fw else ""
     return query(conn, f"""
-        SELECT p.secretaria_origen as secretaria, {sel} as total
-        FROM benefits b JOIN programs p ON b.program_id=p.id {pay_join} {fj}
+        SELECT sec.nombre as secretaria, {sel} as total
+        FROM benefits b JOIN programs p ON b.program_id=p.id
+        JOIN secretarias sec ON p.secretaria_id=sec.id {pay_join} {fj}
         WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO' AND b.cuil_raw IS NOT NULL
         {extra}
-        GROUP BY p.secretaria_origen ORDER BY total DESC
+        GROUP BY sec.nombre ORDER BY total DESC
     """, [period] + fp)
 
 
@@ -482,8 +485,10 @@ def get_nominal_detail(conn, bid, period):
         return None
 
     prestaciones = query(conn, """
-        SELECT b.estado_beneficio, b.periodo_mes, p.nombre_programa, p.secretaria_origen
+        SELECT b.estado_beneficio, b.periodo_mes, p.nombre_programa,
+               sec.nombre as secretaria_origen
         FROM benefits b JOIN programs p ON b.program_id=p.id
+        JOIN secretarias sec ON p.secretaria_id=sec.id
         WHERE b.beneficiary_id=%s AND b.periodo_mes=%s ORDER BY p.nombre_programa
     """, (bid, period))
 

@@ -1,0 +1,49 @@
+12:26:38 
+=======================================================
+12:26:38   RUB — Ingesta de Datasets
+12:26:38   DB: localhost/rub
+12:26:38   Log: C:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_122638.log
+12:26:38 =======================================================
+12:26:38 
+  Cargando: BECAS_BELGRANO...
+12:26:38   Archivos encontrados: 1
+12:26:38 
+───────────────────────────────────────────────────────
+12:26:38   Ingestando: C:\Users\fcohen\repos\rub-dashboard\datasets\RUB\BECAS BELGRANO/becas_belgrano.csv
+12:26:38 ───────────────────────────────────────────────────────
+12:26:38   Columnas CSV: ['cuit', 'apellido', 'nombre', 'sexo', 'provincia', 'fecha_nacimiento', 'monto_liquidado', 'periodo_liquidado']
+12:26:38   *** MODO TEST: límite de 10,000 filas ***
+12:26:38   Cache cargado (0.0s):
+12:26:38     2 secretarías, 2 programas
+12:26:38     19,998 CUILs, 10,000 benefits, 10,000 pagos
+12:26:39   Chunk 1: 10,000 filas [17,124/s]  ben=0 benf=10,000 pay=10,000
+12:26:39 
+  Ingesta completada en 0.6s
+12:26:39   Filas procesadas:                  10,000
+12:26:39   Beneficiarios nuevos:                   0
+12:26:39   Benefits nuevos:                   10,000
+12:26:39   Benefits omitidos (dup):                0
+12:26:39   Pagos nuevos:                      10,000
+12:26:39   Pagos omitidos (dup):                   0
+12:26:39   CUIL inválidos:                         0
+12:26:39   Errores:                                0
+12:26:39 =======================================================
+12:26:39   REPORTE DE INGESTA
+12:26:39 =======================================================
+12:26:39   Dataset:                       BECAS_BELGRANO
+12:26:39   Rows:                                10,000
+12:26:39   Ben new:                                  0
+12:26:39   Ben upd:                                  0
+12:26:39   Benefits new:                        10,000
+12:26:39   Benefits skip:                            0
+12:26:39   Pay new:                             10,000
+12:26:39   Pay skip:                                 0
+12:26:39   Cuil invalido:                            0
+12:26:39   Errores:                                  0
+12:26:39   Tiempo total:                          0.6s
+12:26:39   Log guardado en:               C:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_122638.log
+12:26:39 =======================================================
+12:26:39   Carga de BECAS_BELGRANO completada.
+12:26:39 
+  Hasta luego.
+

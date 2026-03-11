@@ -1,0 +1,37 @@
+12:54:45   Archivos encontrados: 1
+12:54:45 
+───────────────────────────────────────────────────────
+12:54:45   Ingestando: c:\Users\fcohen\repos\rub-dashboard\datasets\RUB\STESS\stess_202603101919.csv
+12:54:45 ───────────────────────────────────────────────────────
+12:54:45   Columnas CSV: ['periodo_liquidado', 'liqui_plan', 'provincia_cod', 'cuil', 'apellido_y_nombre', 'fecha_nacimiento', 'sexo', 'importe_total', 'provincia_desc']
+12:54:45   *** MODO TEST: límite de 50,000 filas ***
+12:54:45   Cache cargado (0.1s):
+12:54:45     3 secretarías, 3 programas
+12:54:45     55,629 CUILs, 69,767 benefits, 69,690 pagos
+12:54:48   Chunk 1: 50,000 filas [14,449/s]  ben=38,460 benf=38,993 pay=38,584
+12:54:48 
+  Ingesta completada en 3.5s
+12:54:48   Filas procesadas:                  50,000
+12:54:48   Beneficiarios nuevos:              38,460
+12:54:48   Benefits nuevos:                   38,993
+12:54:48   Benefits omitidos (dup):           11,007
+12:54:48   Pagos nuevos:                      38,584
+12:54:48   Pagos omitidos (dup):              10,893
+12:54:48   CUIL inválidos:                         0
+12:54:48   Errores:                                0
+12:54:48 =======================================================
+12:54:48   REPORTE DE INGESTA
+12:54:48 =======================================================
+12:54:48   Dataset:                       STESS
+12:54:48   Rows:                                50,000
+12:54:48   Ben new:                             38,460
+12:54:48   Ben upd:                                  0
+12:54:48   Benefits new:                        38,993
+12:54:48   Benefits skip:                       11,007
+12:54:48   Pay new:                             38,584
+12:54:48   Pay skip:                            10,893
+12:54:48   Cuil invalido:                            0
+12:54:48   Errores:                                  0
+12:54:48   Tiempo total:                          3.5s
+12:54:48   Log guardado en:               c:\Users\fcohen\repos\rub-dashboard\logs\ingest_20260311_125445.log
+12:54:48 =======================================================

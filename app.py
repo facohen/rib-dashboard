@@ -38,7 +38,8 @@ SQL_GEN_PROMPT = """Generador SQL para PostgreSQL. Responde UNICAMENTE con una q
 
 TABLAS:
 beneficiaries(id,cuil,nombre,apellido,sexo,fecha_nacimiento,provincia,departamento)
-programs(id,secretaria_origen,nombre_programa)
+secretarias(id,nombre)
+programs(id,secretaria_id REFERENCES secretarias(id),nombre_programa)
 benefits(id,beneficiary_id,program_id,periodo_mes,estado_beneficio)
 payments(id,beneficiary_id,program_id,periodo_mes,monto_prestacion)
 incompatibility_rules(id,program_a_id,program_b_id,is_compatible,descripcion)
