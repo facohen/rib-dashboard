@@ -26,7 +26,7 @@ Dashboard tarda ~80s con filtros. La arquitectura actual tiene 11 MVs separadas 
 | `provincia` | ~23 | `beneficiaries.provincia` |
 | `sexo` | 4 (M/F/X/NI) | `beneficiaries.sexo` |
 | `grupo_etario` | 6 | Calculado: 0-4, 5-12, 13-17, 18-29, 30-59, 60+ |
-| `sexo_label` | 4 | Display: Masculino, Femenino, No binario, No informado |
+| `sexo_label` | 4 | Derivado de `sexo` (display only, no multiplica filas) |
 | `cant_prestaciones` | 3 | Calculado: '1', '2', '3+' |
 
 ### Agregados (3)
@@ -51,6 +51,13 @@ WITH benef_prog_count AS (
     FROM benefits
     WHERE estado_beneficio = 'ACTIVO' AND beneficiary_id IS NOT NULL
     GROUP BY beneficiary_id, periodo_mes
+),
+-- Pre-agregar pagos para evitar fan-out (1 benefit con N pagos inflaría COUNT/SUM)
+payment_agg AS (
+    SELECT beneficiary_id, program_id, periodo_mes,
+           SUM(monto_prestacion) AS total_monto
+    FROM payments
+    GROUP BY beneficiary_id, program_id, periodo_mes
 ),
 base AS (
     SELECT b.periodo_mes, p.nombre_programa, p.secretaria_origen,
@@ -91,22 +98,22 @@ base AS (
                ELSE '3+'
            END AS cant_prestaciones,
            b.beneficiary_id,
-           pay.monto_prestacion
+           pa.total_monto
     FROM benefits b
     JOIN programs p ON b.program_id = p.id
     JOIN beneficiaries ben ON b.beneficiary_id = ben.id
     JOIN benef_prog_count bpc
          ON bpc.beneficiary_id = b.beneficiary_id
          AND bpc.periodo_mes = b.periodo_mes
-    LEFT JOIN payments pay ON pay.beneficiary_id = b.beneficiary_id
-        AND pay.program_id = b.program_id AND pay.periodo_mes = b.periodo_mes
+    LEFT JOIN payment_agg pa ON pa.beneficiary_id = b.beneficiary_id
+        AND pa.program_id = b.program_id AND pa.periodo_mes = b.periodo_mes
     WHERE b.estado_beneficio = 'ACTIVO'
 )
 SELECT periodo_mes, nombre_programa, secretaria_origen,
        provincia, sexo, grupo_etario, sexo_label, cant_prestaciones,
        COUNT(DISTINCT beneficiary_id) AS personas,
        COUNT(*) AS beneficios,
-       COALESCE(SUM(monto_prestacion), 0) AS montos
+       COALESCE(SUM(total_monto), 0) AS montos
 FROM base
 GROUP BY periodo_mes, nombre_programa, secretaria_origen,
          provincia, sexo, grupo_etario, sexo_label, cant_prestaciones;
@@ -140,6 +147,9 @@ CREATE INDEX ON mv_cross(periodo_mes, cant_prestaciones);
 | Concentración | `GROUP BY cant_prestaciones WHERE periodo` |
 | Filtros cruzados | WHERE clauses adicionales en cualquier dimensión |
 | Incompatibilidades | Query directa sobre benefits (no MV) |
+| Departamento (top 10) | Raw SQL fallback — no está en mv_cross (demasiados valores explosionarían dimensiones) |
+
+**Mapeo de campos legacy en `get_summary()`:** `cobertura` → `SUM(personas)`, `tasaNoIdentificados` → 0 (artefacto eliminado).
 
 ### Extensibilidad
 
@@ -180,7 +190,7 @@ Genera datos realistas para desarrollo y testing a 4 escalas. Cada beneficiario 
 
 **Geográfica (23 provincias):** Pesos poblacionales reales — Buenos Aires 38%, Córdoba/Santa Fe 8% c/u, bajando hasta Tierra del Fuego 0.5%. Cada provincia tiene departamentos reales con códigos INDEC.
 
-**Demográfica:** 4 grupos etarios (niñez 20%, jóvenes 30%, adultos 35%, mayores 15%). Sexo con sesgo femenino como en programas sociales reales: pool `[M,M,M,F,F,F,F,F,X,NI]`.
+**Demográfica:** 4 grupos de generación de edad (niñez 0-12: 20%, jóvenes 13-29: 30%, adultos 30-59: 35%, mayores 60-85: 15%) que alimentan `birth_date()` con edades continuas. La MV luego las agrupa en 6 buckets más finos (0-4, 5-12, 13-17, 18-29, 30-59, 60+) — no es un mapeo 1:1. Sexo con sesgo femenino como en programas sociales reales: pool `[M,M,M,F,F,F,F,F,X,NI]`.
 
 **Concentración de prestaciones:** 50% con 1 programa, 30% con 2, 15% con 3+, 5% inválidos (sin beneficiary_id — artefacto de testing, no presente en DB real).
 
@@ -301,6 +311,10 @@ WHERE periodo_mes = '2026-03' AND estado_beneficio = 'ACTIVO'
 | `create_matviews.py` | De 11 MVs a `mv_cross` expandida + lookups |
 | `refresh_matviews.py` | Refresh solo mv_cross + lookups |
 | `queries.py` | Simplificar: todo pasa por mv_cross, eliminar MVs individuales y raw fallbacks |
-| `app.py` | Eliminar Redis, solo SimpleCache |
-| `requirements.txt` | Quitar `redis` |
+| `app.py` | Eliminar Redis, solo SimpleCache. Actualizar health endpoint (matviews count 11→1) |
+| `requirements.txt` | Confirmar que `redis` no está (ya fue removido) |
 | `ingest.py` | Quitar opción [9] Redis, actualizar textos, consistencia contra mv_cross |
+
+### Nota de transición
+
+`create_matviews.py` debe hacer `DROP MATERIALIZED VIEW IF EXISTS` de las 10 MVs viejas antes de crear `mv_cross`. La stored function `refresh_all_matviews()` se sobreescribe con `CREATE OR REPLACE` (idempotente).
