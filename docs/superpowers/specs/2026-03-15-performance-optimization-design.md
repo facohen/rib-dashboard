@@ -41,10 +41,10 @@ Dashboard tarda ~80s con filtros. La arquitectura actual tiene 11 MVs separadas 
 
 ~43K filas actuales (sin cant_prestaciones) x3 = **~100-130K filas, <10MB**
 
-### SQL
+### SQL (creación inicial)
 
 ```sql
-CREATE MATERIALIZED VIEW mv_cross AS
+CREATE TABLE mv_cross AS
 WITH benef_prog_count AS (
     SELECT beneficiary_id, periodo_mes,
            COUNT(DISTINCT program_id) AS cant_prog
@@ -161,15 +161,43 @@ Para agregar una dimensión nueva (ej: `progenitor_unico`):
 
 Cuando las filas superen ~500K, evaluar DuckDB como motor analítico.
 
-### Refresh
+### Refresh: patrón Blue/Green
+
+En vez de `REFRESH MATERIALIZED VIEW CONCURRENTLY` (lockea lectores, consume CPU en la DB transaccional), se usa una tabla física con intercambio atómico:
 
 ```sql
 CREATE OR REPLACE FUNCTION refresh_all_matviews() RETURNS void AS $$
 BEGIN
-    REFRESH MATERIALIZED VIEW CONCURRENTLY mv_cross;
+    -- 1. Crear tabla shadow con datos frescos
+    DROP TABLE IF EXISTS mv_cross_new;
+    CREATE TABLE mv_cross_new AS
+        -- (misma query que el CREATE MATERIALIZED VIEW original)
+        WITH benef_prog_count AS (...),
+             payment_agg AS (...),
+             base AS (...)
+        SELECT ... FROM base GROUP BY ...;
+
+    -- 2. Crear índices en la shadow (sin afectar lectores)
+    CREATE UNIQUE INDEX ON mv_cross_new(...);
+    CREATE INDEX ON mv_cross_new(periodo_mes);
+    -- etc.
+
+    -- 3. Intercambio atómico (~1ms)
+    DROP TABLE IF EXISTS mv_cross_old;
+    ALTER TABLE mv_cross RENAME TO mv_cross_old;
+    ALTER TABLE mv_cross_new RENAME TO mv_cross;
+    DROP TABLE IF EXISTS mv_cross_old;
 END;
 $$ LANGUAGE plpgsql;
 ```
+
+**Ventajas vs REFRESH CONCURRENTLY:**
+- Zero downtime para lectores — el dashboard nunca ve datos parciales
+- No requiere UNIQUE INDEX previo (requisito de CONCURRENTLY)
+- La tabla shadow se construye sin afectar queries en curso
+- El swap es un rename atómico (~1ms)
+
+**Nota:** `mv_cross` deja de ser una `MATERIALIZED VIEW` y pasa a ser una tabla física regular. `create_matviews.py` la crea inicialmente como tabla (no como MV). El nombre se mantiene por convención.
 
 ---
 
@@ -217,18 +245,20 @@ Genera datos realistas para desarrollo y testing a 4 escalas. Cada beneficiario 
 
 ---
 
-## Cache: SimpleCache
+## Cache: FileSystemCache
 
 ```python
 cache_config = {
-    "CACHE_TYPE": "SimpleCache",
+    "CACHE_TYPE": "FileSystemCache",
+    "CACHE_DIR": "/tmp/rub-cache",
     "CACHE_DEFAULT_TIMEOUT": 3600,
 }
 ```
 
 - Sin Redis — zero dependencias externas
+- Compartido entre todos los workers de Gunicorn (a diferencia de SimpleCache que es per-process)
+- Elimina "parpadeo" de números en el dashboard cuando hay múltiples workers
 - Con MV respondiendo en <10ms, el cache es safety net, no necesidad
-- Per-process (no compartido entre workers Gunicorn) — aceptable porque las queries son baratas
 - Endpoints nominales NO se cachean (PII)
 - `POST /api/admin/clear-cache` para invalidar
 
@@ -308,8 +338,8 @@ WHERE periodo_mes = '2026-03' AND estado_beneficio = 'ACTIVO'
 
 | Archivo | Cambios |
 |---------|---------|
-| `create_matviews.py` | De 11 MVs a `mv_cross` expandida + lookups |
-| `refresh_matviews.py` | Refresh solo mv_cross + lookups |
+| `create_matviews.py` | De 11 MVs a tabla `mv_cross` (blue/green) + lookups |
+| `refresh_matviews.py` | Refresh blue/green (shadow table + swap atómico) + lookups |
 | `queries.py` | Simplificar: todo pasa por mv_cross, eliminar MVs individuales y raw fallbacks |
 | `app.py` | Eliminar Redis, solo SimpleCache. Actualizar health endpoint (matviews count 11→1) |
 | `requirements.txt` | Confirmar que `redis` no está (ya fue removido) |
@@ -318,4 +348,4 @@ WHERE periodo_mes = '2026-03' AND estado_beneficio = 'ACTIVO'
 
 ### Nota de transición
 
-`create_matviews.py` debe hacer `DROP MATERIALIZED VIEW IF EXISTS` de las 10 MVs viejas antes de crear `mv_cross`. La stored function `refresh_all_matviews()` se sobreescribe con `CREATE OR REPLACE` (idempotente).
+`create_matviews.py` debe hacer `DROP MATERIALIZED VIEW IF EXISTS` de las 10 MVs viejas y `DROP TABLE IF EXISTS mv_cross` antes de crear la tabla nueva. La stored function `refresh_all_matviews()` se sobreescribe con `CREATE OR REPLACE` (idempotente).
