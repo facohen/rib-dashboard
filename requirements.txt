@@ -1,0 +1,7 @@
+flask
+flask-caching
+psycopg2-binary
+redis
+requests
+gunicorn
+polars

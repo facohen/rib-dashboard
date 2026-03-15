@@ -1,6 +1,7 @@
 """
 RUB Dashboard – Flask + PostgreSQL
 Correr con: DATABASE_URL=postgresql://... python app.py
+Producción: gunicorn -w 4 app:app --bind 0.0.0.0:5000
 """
 import hashlib
 import json as json_mod
@@ -11,7 +12,8 @@ import requests as http_requests
 from flask import (Flask, render_template, request, redirect, url_for,
                    session, jsonify, g, flash, Response)
 from flask.json.provider import DefaultJSONProvider
-from config import get_connection
+from flask_caching import Cache
+from config import get_connection, put_connection
 import queries
 
 
@@ -26,6 +28,29 @@ app = Flask(__name__)
 app.json_provider_class = CustomJSONProvider
 app.json = CustomJSONProvider(app)
 app.secret_key = "rub-dashboard-secret-2026-change-in-prod"
+
+# ──────────────────────────────────────────────
+# Cache: Redis if available, SimpleCache as fallback
+# Data is monthly (immutable within period) → aggressive TTL
+# ──────────────────────────────────────────────
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+try:
+    import redis
+    redis.from_url(REDIS_URL).ping()
+    cache_config = {
+        "CACHE_TYPE": "RedisCache",
+        "CACHE_REDIS_URL": REDIS_URL,
+        "CACHE_DEFAULT_TIMEOUT": 3600,
+    }
+    print("[CACHE] Redis conectado")
+except Exception:
+    cache_config = {
+        "CACHE_TYPE": "SimpleCache",
+        "CACHE_DEFAULT_TIMEOUT": 3600,
+    }
+    print("[CACHE] Redis no disponible, usando SimpleCache (no compartido entre workers)")
+
+cache = Cache(app, config=cache_config)
 
 # ──────────────────────────────────────────────
 # Ollama / Chatbot config
@@ -72,7 +97,7 @@ def get_db():
 def close_db(e=None):
     db = g.pop("db", None)
     if db:
-        db.close()
+        put_connection(db)
 
 # ──────────────────────────────────────────────
 # Auth helpers
@@ -402,58 +427,76 @@ def _get_chart_filters():
             f[k] = v
     return f or None
 
+def _cache_key():
+    """Cache key from full query string — unique per endpoint+params."""
+    return request.full_path
+
 @app.route("/api/indicators/summary")
 @login_required
+@cache.cached(key_prefix=_cache_key)
 def api_summary():
     period = request.args.get("period", "2026-03")
     return jsonify(queries.get_summary(get_db(), period, _get_chart_filters()))
 
 @app.route("/api/indicators/by-secretaria")
 @login_required
+@cache.cached(key_prefix=_cache_key)
 def api_by_secretaria():
     period = request.args.get("period", "2026-03")
-    metric = request.args.get("metric", "beneficiarios")
+    metric = request.args.get("metric", "personas")
     return jsonify(queries.get_by_secretaria(get_db(), period, _get_chart_filters(), metric))
 
 @app.route("/api/indicators/by-provincia")
 @login_required
+@cache.cached(key_prefix=_cache_key)
 def api_by_provincia():
     period = request.args.get("period", "2026-03")
-    metric = request.args.get("metric", "beneficiarios")
+    metric = request.args.get("metric", "personas")
     return jsonify(queries.get_by_provincia(get_db(), period, _get_chart_filters(), metric))
 
 @app.route("/api/indicators/by-departamento")
 @login_required
+@cache.cached(key_prefix=_cache_key)
 def api_by_departamento():
     period = request.args.get("period", "2026-03")
     return jsonify(queries.get_by_departamento(get_db(), period, _get_chart_filters()))
 
 @app.route("/api/indicators/by-programa")
 @login_required
+@cache.cached(key_prefix=_cache_key)
 def api_by_programa():
     period = request.args.get("period", "2026-03")
-    metric = request.args.get("metric", "beneficiarios")
+    metric = request.args.get("metric", "personas")
     return jsonify(queries.get_by_programa(get_db(), period, _get_chart_filters(), metric))
 
 @app.route("/api/indicators/by-sexo")
 @login_required
+@cache.cached(key_prefix=_cache_key)
 def api_by_sexo():
     period = request.args.get("period", "2026-03")
-    metric = request.args.get("metric", "beneficiarios")
+    metric = request.args.get("metric", "personas")
     return jsonify(queries.get_by_sexo(get_db(), period, _get_chart_filters(), metric))
 
 @app.route("/api/indicators/by-grupo-etario")
 @login_required
+@cache.cached(key_prefix=_cache_key)
 def api_by_grupo_etario():
     period = request.args.get("period", "2026-03")
-    metric = request.args.get("metric", "beneficiarios")
+    metric = request.args.get("metric", "personas")
     return jsonify(queries.get_by_grupo_etario(get_db(), period, _get_chart_filters(), metric))
 
 @app.route("/api/indicators/evolucion")
 @login_required
+@cache.cached(key_prefix=_cache_key)
 def api_evolucion():
-    metric = request.args.get("metric", "beneficiarios")
+    metric = request.args.get("metric", "personas")
     return jsonify(queries.get_evolucion(get_db(), _get_chart_filters(), metric))
+
+@app.route("/api/admin/clear-cache", methods=["POST"])
+@admin_required
+def clear_cache():
+    cache.clear()
+    return jsonify({"ok": True})
 
 # ──────────────────────────────────────────────
 # API: Nominal (admin only)

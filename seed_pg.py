@@ -111,6 +111,8 @@ def birth_date(group_idx):
 # ──────────────────────────────────────────────
 
 SCHEMA = """
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 DROP TABLE IF EXISTS payments CASCADE;
 DROP TABLE IF EXISTS benefits CASCADE;
 DROP TABLE IF EXISTS incompatibility_rules CASCADE;
@@ -178,11 +180,16 @@ CREATE INDEX idx_benefits_period_state_benid ON benefits(periodo_mes, estado_ben
 CREATE INDEX idx_benefits_period_state_cuil ON benefits(periodo_mes, estado_beneficio, cuil_raw);
 CREATE INDEX idx_benefits_program_period ON benefits(program_id, periodo_mes, estado_beneficio, beneficiary_id);
 CREATE INDEX idx_benefits_benid ON benefits(beneficiary_id);
+CREATE INDEX idx_benefits_active_benid ON benefits(beneficiary_id, program_id, periodo_mes) WHERE estado_beneficio = 'ACTIVO';
 CREATE INDEX idx_ben_provincia ON beneficiaries(provincia);
 CREATE INDEX idx_ben_apellido_nombre ON beneficiaries(apellido, nombre);
 CREATE INDEX idx_ben_cuil ON beneficiaries(cuil);
+CREATE INDEX idx_ben_departamento ON beneficiaries(departamento);
+CREATE INDEX idx_ben_sexo ON beneficiaries(sexo);
+CREATE INDEX idx_ben_fecha_nacimiento ON beneficiaries(fecha_nacimiento);
 CREATE INDEX idx_payments_period ON payments(periodo_mes);
-CREATE INDEX idx_payments_benid_period ON payments(beneficiary_id, periodo_mes);
+CREATE INDEX idx_payments_compound ON payments(beneficiary_id, program_id, periodo_mes);
+CREATE INDEX idx_ben_cuil_trgm ON beneficiaries USING gin(cuil gin_trgm_ops);
 """
 
 
