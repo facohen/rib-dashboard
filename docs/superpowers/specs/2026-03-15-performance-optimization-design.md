@@ -489,9 +489,258 @@ Skipped (false positive or low-value):
 
 ---
 
-## Remaining Work
+## Remaining Work (Performance)
 
 1. **Step 0: Physical table cleanup** — Execute `DROP INDEX` on live DB (~2+ GB freed)
 2. **Step 0c: Table partitioning** — Evaluate partitioning by `periodo_mes` during next data load
 3. **Step 8: Keyset pagination** — Consider if nominal becomes slow at high page numbers
 4. **Step 7b: Consolidated API call** — Consider `/api/indicators/all` if network latency is significant
+
+---
+
+## Step 10: Menú unificado (ingest.py) — Pending
+
+### Estado actual
+
+El menú de `ingest.py` ya tiene opciones [1]-[9]+[S]. Faltan 3 opciones para cubrir todo el ciclo de vida:
+
+| Falta | Descripción |
+|-------|-------------|
+| [I] Inicializar DB | Schema + índices + usuarios (sin datos) |
+| [D] Seedear datos demo | 10K/100K/1M/8M via seed_pg.py |
+| [C] Check consistencia | DB ↔ MVs ↔ API |
+
+### Menú completo propuesto
+
+```
+  Setup:
+    [I] Inicializar base de datos (schema + índices + usuarios)
+    [D] Seedear datos demo (10K/100K/1M/8M)
+  Datos:
+    [1] Ver estado de la base de datos
+    [2] Cargar dataset (CSV via ingest_config.py) — por fuente o todos
+    [3] Limpiar periodo específico
+    [4] Limpiar TODAS las tablas de datos
+  Pipeline:
+    [5] Crear vistas materializadas
+    [6] Refrescar vistas materializadas
+    [7] Ver estado de matviews
+    [8] Limpiar índices redundantes (Step 0)
+  Verificación:
+    [C] Check consistencia DB ↔ MVs ↔ API
+  Servicios:
+    [9] Verificar conexión Redis
+    [S] Servir dashboard (Flask dev)
+    [0] Salir
+```
+
+### Implementación
+
+**[I] Inicializar DB** — llama `seed_pg.py --schema-only` (flag nuevo, ~5 lín en `__main__`). Ejecuta SCHEMA + INDEXES + INSERT users sin generar beneficiarios.
+
+**[D] Seedear datos demo** — submenu:
+```
+  [1] 10K (test rápido, ~12s)
+  [2] 100K (~2min)
+  [3] 1M (~5min)
+  [4] 8M completo (~30min)
+  [0] Volver
+```
+
+**[2] Cargar dataset** — ya existe con submenu por fuente (VOUCHERS, BELGRANO, STESS, ALIMENTAR, [T]odos, [0] Volver).
+
+**[C] Check consistencia** — ver Step 11.
+
+**Compatibilidad:** Todos los scripts siguen funcionando por separado (`python seed_pg.py --small`, `python app.py`, etc.).
+
+---
+
+## Step 11: Check de consistencia E2E — Pending
+
+### Qué valida
+
+**1. Schema** — tablas, matviews y lookups existen:
+```sql
+SELECT tablename FROM pg_tables WHERE schemaname='public'
+  AND tablename IN ('beneficiaries','benefits','payments','programs',
+                    'secretarias','users','incompatibility_rules');
+SELECT matviewname FROM pg_matviews WHERE schemaname='public';
+SELECT tablename FROM pg_tables WHERE tablename IN ('periods','provincias_lookup');
+```
+
+**2. DB ↔ MVs** — datos consistentes:
+- `mv_summary.total_benef` == `COUNT(DISTINCT beneficiary_id) FROM benefits WHERE ACTIVO` (por periodo)
+- `SUM(personas)` en `mv_by_provincia` == `total_benef` en `mv_summary` (por periodo)
+- `SUM(personas)` en `mv_by_programa` == `total_benef` en `mv_summary` (por periodo)
+- `SUM(personas)` en `mv_by_sexo` == `total_benef` en `mv_summary` (por periodo)
+- `con_una + con_dos + con_tres_mas` en `mv_concentracion` == `total_benef`
+- `SUM(montos)` en `mv_by_programa` == `SUM(monto_prestacion)` en `payments JOIN benefits WHERE ACTIVO`
+- `SUM` across `mv_cross GROUP BY provincia` == `mv_by_provincia`
+- Periodos en `mv_summary` == filas en `periods` lookup
+- Provincias en `mv_by_provincia` ⊆ `provincias_lookup`
+
+**3. MVs ↔ API** (requiere dashboard corriendo, skip con warning si no):
+- `GET /api/indicators/summary?period=X` vs `mv_summary`
+- `GET /api/indicators/by-provincia?period=X` vs `mv_by_provincia`
+- `GET /api/indicators/evolucion` vs `mv_evolucion`
+
+**4. Invariantes matemáticas:**
+- `identificados + no_identificados == total_prest`
+- `montos > 0` cuando `personas > 0`
+- Todo periodo tiene al menos 1 beneficiario
+- Todo programa tiene al menos 1 beneficiario por periodo
+
+### Output
+```
+  Check consistencia:
+  ✓ Schema: 7/7 tablas, 11/11 matviews, 2/2 lookups
+  ✓ mv_summary vs benefits: OK (3 periodos)
+  ✓ mv_by_provincia sums: OK
+  ✓ mv_by_programa sums: OK
+  ✓ mv_by_sexo sums: OK
+  ✓ mv_concentracion sums: OK
+  ✓ mv_cross vs mv_by_provincia: OK
+  ✓ mv_montos vs payments: OK
+  ✓ Invariantes: OK
+  ⚠ API check: dashboard no corriendo (skip)
+
+  9/10 checks passed, 1 skipped
+```
+
+### Implementación
+- Función `_check_consistency(conn)` en ingest.py (~80 líneas)
+- Cada check: par de queries SQL comparadas
+- Output via `log.info` (consistente con el resto del menú)
+
+---
+
+## Step 12: Health endpoints — Pending
+
+Dos endpoints en `app.py` (sin auth — para monitoring):
+
+### GET /api/health/api
+```python
+@app.route("/api/health/api")
+def health_api():
+    checks = {}
+    try:
+        conn = get_db()
+        conn.cursor().execute("SELECT 1")
+        checks["db"] = "ok"
+    except Exception:
+        checks["db"] = "error"
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM pg_matviews WHERE schemaname='public'")
+        checks["matviews"] = f"{cur.fetchone()[0]}/11"
+    except Exception:
+        checks["matviews"] = "error"
+    checks["cache"] = cache.config.get("CACHE_TYPE", "unknown")
+    checks["status"] = "ok" if checks["db"] == "ok" else "degraded"
+    return jsonify(checks)
+```
+
+### GET /api/health/ml
+```python
+@app.route("/api/health/ml")
+def health_ml():
+    checks = {}
+    try:
+        r = http_requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        models = [m["name"] for m in r.json().get("models", [])]
+        checks["ollama"] = "ok"
+        checks["models"] = models
+        checks["target_model"] = CHATBOT_MODEL
+        checks["model_loaded"] = any(CHATBOT_MODEL in m for m in models)
+    except Exception:
+        checks["ollama"] = "unreachable"
+        checks["model_loaded"] = False
+    checks["status"] = "ok" if checks.get("model_loaded") else "degraded"
+    return jsonify(checks)
+```
+
+---
+
+## Step 13: Hardening de seguridad — Pending
+
+> Sin TLS → no usar `SESSION_COOKIE_SECURE=True`. Mitigaciones en capa de aplicación.
+
+### 13a. Secretos y hashing (CRITICAL)
+
+| Hallazgo | Archivo:línea | Fix |
+|----------|---------------|-----|
+| Flask secret key hardcoded | app.py:30 | Leer de `FLASK_SECRET_KEY` env, generar random si no existe + warning |
+| SHA256 sin salt para passwords | app.py:106, seed_pg.py:89 | `werkzeug.security.generate_password_hash()` + migración transparente en login |
+| DB creds hardcoded en fallback | config.py:18 | Quitar default, `RuntimeError` si no hay `DATABASE_URL` |
+| Timing attack en comparación | app.py:153 | `check_password_hash()` es constant-time |
+
+### 13b. Session hardening
+
+| Fix | Detalle |
+|-----|---------|
+| Cookie config | `SESSION_COOKIE_HTTPONLY=True`, `SAMESITE="Lax"`, `PERMANENT_SESSION_LIFETIME=3600` |
+| Session fixation | `session.clear()` antes de setear valores en login |
+| Debug mode | `debug=os.environ.get("FLASK_DEBUG","").lower() in ("1","true")` |
+
+### 13c. Security headers + CSRF
+
+| Fix | Detalle |
+|-----|---------|
+| Headers | `@app.after_request`: X-Content-Type-Options, X-Frame-Options, Referrer-Policy, CSP |
+| CSRF | `flask-wtf` + `CSRFProtect(app)` + tokens en login.html, base.html, chatbot.html |
+| Dep nueva | `flask-wtf` en requirements.txt |
+
+CSP permite CDNs existentes (Chart.js, Leaflet, marked.js, Google Fonts) + inline scripts/styles.
+
+### 13d. Redis security
+
+| Fix | Detalle |
+|-----|---------|
+| Cache key hashing | `_cache_key()` → `"rub:" + sha256(path)[:16]` en vez de path crudo |
+| Key prefix | `CACHE_KEY_PREFIX: "rub:"` en cache_config |
+
+### 13e. XSS en templates
+
+| Fix | Archivo | Detalle |
+|-----|---------|---------|
+| innerHTML con PII | nominal.html | Agregar `sanitize()` helper, wrappear interpolaciones |
+| LLM output | chatbot.html | DOMPurify desde CDN + `DOMPurify.sanitize(marked.parse(content))` |
+
+### 13f. Chatbot SQL safety
+
+| Fix | Detalle |
+|-----|---------|
+| Table allowlist | Regex para extraer tablas, validar contra `{beneficiaries, benefits, payments, programs, incompatibility_rules, secretarias}`. Rechazar si menciona `users` |
+| LIMIT enforcement | Si SQL no tiene LIMIT → agregar `LIMIT 100` |
+| CUIL masking | En `_format_sql_result()`: columnas `cuil`/`cuil_raw` → `*******1234` |
+
+### 13g. Rate limiting en login
+
+Rate limiter simple in-memory (~15 líneas): 5 intentos por IP en ventana de 5 minutos.
+
+### Fuera de scope (requiere infra)
+- TLS/HTTPS, `SESSION_COOKIE_SECURE`, PostgreSQL SSL server-side, Redis `requirepass`
+
+---
+
+## Etapas de ejecución (agentes paralelos)
+
+```
+Etapa 1: Menú unificado (Step 10) + Health endpoints (Step 12)
+         → ingest.py, seed_pg.py (--schema-only), app.py (health)
+
+Etapa 2: Seguridad core (Step 13a + 13b + 13g)
+         → config.py, app.py, seed_pg.py
+
+Etapa 3: Seguridad frontend (Step 13c + 13e)
+         → app.py, requirements.txt, templates/*.html
+         → depende de flask-wtf (requirements.txt de Etapa 2)
+
+Etapa 4: Redis + chatbot safety (Step 13d + 13f)
+         → app.py
+
+Etapa 5: Check de consistencia (Step 11)
+         → ingest.py (depende de Etapa 1)
+```
+
+Etapas 1, 2 y 4 pueden ejecutarse en paralelo. Etapa 3 después de 2. Etapa 5 después de 1.
