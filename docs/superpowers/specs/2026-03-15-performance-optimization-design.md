@@ -149,7 +149,7 @@ CREATE INDEX ON mv_cross(periodo_mes, cant_prestaciones);
 | Incompatibilidades | Query directa sobre benefits (no MV) |
 | Departamento (top 10) | Raw SQL fallback — no está en mv_cross (demasiados valores explosionarían dimensiones) |
 
-**Mapeo de campos legacy en `get_summary()`:** `cobertura` → `SUM(personas)`, `tasaNoIdentificados` → 0 (artefacto eliminado).
+**Mapeo de campos legacy en `get_summary()`:** `cobertura` → `SUM(personas)`, `tasaNoIdentificados` → 0 (artefacto del generador demo, eliminado). No hay `mv_cobertura` — todo sale de `mv_cross`.
 
 ### Extensibilidad
 
@@ -314,6 +314,7 @@ WHERE periodo_mes = '2026-03' AND estado_beneficio = 'ACTIVO'
 | `app.py` | Eliminar Redis, solo SimpleCache. Actualizar health endpoint (matviews count 11→1) |
 | `requirements.txt` | Confirmar que `redis` no está (ya fue removido) |
 | `ingest.py` | Quitar opción [9] Redis, actualizar textos, consistencia contra mv_cross |
+| `CLAUDE.md` | Actualizar: 11 MVs→1, quitar referencias a Redis, actualizar comandos |
 
 ### Nota de transición
 
