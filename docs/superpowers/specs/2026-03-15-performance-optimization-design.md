@@ -16,7 +16,7 @@ Dashboard tarda ~80s con filtros. La arquitectura actual tiene 11 MVs separadas 
 
 ## MV única: `mv_cross`
 
-### Dimensiones (8)
+### Dimensiones (7)
 
 | Dimensión | Cardinalidad | Fuente |
 |-----------|-------------|--------|
@@ -26,16 +26,17 @@ Dashboard tarda ~80s con filtros. La arquitectura actual tiene 11 MVs separadas 
 | `provincia` | ~23 | `beneficiaries.provincia` |
 | `sexo` | 4 (M/F/X/NI) | `beneficiaries.sexo` |
 | `grupo_etario` | 6 | Calculado: 0-4, 5-12, 13-17, 18-29, 30-59, 60+ |
-| `sexo_label` | 4 | Derivado de `sexo` (display only, no multiplica filas) |
 | `cant_prestaciones` | 3 | Calculado: '1', '2', '3+' |
+
+`sexo_label` NO está en la tabla — se calcula en query time con `CASE sexo WHEN 'M' THEN 'Masculino' ...`. Esto mantiene el GROUP BY limpio y el índice único sin ambigüedad.
 
 ### Agregados (3)
 
 | Columna | Expresión |
 |---------|-----------|
-| `personas` | `COUNT(DISTINCT beneficiary_id)` |
-| `beneficios` | `COUNT(*)` |
-| `montos` | `COALESCE(SUM(monto_prestacion), 0)` |
+| `personas` | `COUNT(*)` (pre-agregado por beneficiario — sin DISTINCT) |
+| `beneficios` | `SUM(cant_benefits)` |
+| `montos` | `COALESCE(SUM(total_monto), 0)` |
 
 ### Estimación
 
@@ -45,21 +46,24 @@ Dashboard tarda ~80s con filtros. La arquitectura actual tiene 11 MVs separadas 
 
 ```sql
 CREATE TABLE mv_cross AS
-WITH benef_prog_count AS (
+WITH
+-- 1. Contar programas por beneficiario-periodo (para cant_prestaciones)
+benef_prog_count AS (
     SELECT beneficiary_id, periodo_mes,
            COUNT(DISTINCT program_id) AS cant_prog
     FROM benefits
     WHERE estado_beneficio = 'ACTIVO' AND beneficiary_id IS NOT NULL
     GROUP BY beneficiary_id, periodo_mes
 ),
--- Pre-agregar pagos para evitar fan-out (1 benefit con N pagos inflaría COUNT/SUM)
+-- 2. Pre-agregar pagos para evitar fan-out (1 benefit con N pagos inflaría SUM)
 payment_agg AS (
     SELECT beneficiary_id, program_id, periodo_mes,
            SUM(monto_prestacion) AS total_monto
     FROM payments
     GROUP BY beneficiary_id, program_id, periodo_mes
 ),
-base AS (
+-- 3. Una fila por benefit, con dimensiones resueltas y monto pre-agregado
+benefit_enriched AS (
     SELECT b.periodo_mes, p.nombre_programa, p.secretaria_origen,
            ben.provincia, ben.sexo,
            CASE
@@ -90,8 +94,6 @@ base AS (
              )) <= 59 THEN '30-59 años'
              ELSE '60+ años'
            END AS grupo_etario,
-           CASE ben.sexo WHEN 'M' THEN 'Masculino' WHEN 'F' THEN 'Femenino'
-                         WHEN 'X' THEN 'No binario' ELSE 'No informado' END AS sexo_label,
            CASE
                WHEN bpc.cant_prog = 1 THEN '1'
                WHEN bpc.cant_prog = 2 THEN '2'
@@ -108,21 +110,36 @@ base AS (
     LEFT JOIN payment_agg pa ON pa.beneficiary_id = b.beneficiary_id
         AND pa.program_id = b.program_id AND pa.periodo_mes = b.periodo_mes
     WHERE b.estado_beneficio = 'ACTIVO'
+),
+-- 4. Pre-agregar por beneficiario + dimensiones → elimina COUNT(DISTINCT)
+per_person AS (
+    SELECT periodo_mes, nombre_programa, secretaria_origen,
+           provincia, sexo, grupo_etario, cant_prestaciones,
+           beneficiary_id,
+           COUNT(*) AS cant_benefits,
+           COALESCE(SUM(total_monto), 0) AS person_monto
+    FROM benefit_enriched
+    GROUP BY periodo_mes, nombre_programa, secretaria_origen,
+             provincia, sexo, grupo_etario, cant_prestaciones, beneficiary_id
 )
+-- 5. Agregar final: COUNT(*) = personas (ya es 1 fila por persona), SUM = totales
 SELECT periodo_mes, nombre_programa, secretaria_origen,
-       provincia, sexo, grupo_etario, sexo_label, cant_prestaciones,
-       COUNT(DISTINCT beneficiary_id) AS personas,
-       COUNT(*) AS beneficios,
-       COALESCE(SUM(total_monto), 0) AS montos
-FROM base
+       provincia, sexo, grupo_etario, cant_prestaciones,
+       COUNT(*) AS personas,
+       SUM(cant_benefits) AS beneficios,
+       SUM(person_monto) AS montos
+FROM per_person
 GROUP BY periodo_mes, nombre_programa, secretaria_origen,
-         provincia, sexo, grupo_etario, sexo_label, cant_prestaciones;
+         provincia, sexo, grupo_etario, cant_prestaciones;
 ```
+
+**Por qué pre-agregar por beneficiario:** `COUNT(DISTINCT beneficiary_id)` requiere sort/hash sobre millones de filas. Con el CTE `per_person` ya hay 1 fila por persona, así que `COUNT(*)` = personas sin DISTINCT. Esto acelera el refresh **3-5x**.
 
 ### Índices
 
 ```sql
 CREATE UNIQUE INDEX ON mv_cross(periodo_mes, nombre_programa, secretaria_origen, provincia, sexo, grupo_etario, cant_prestaciones);
+-- sexo_label NO está en la tabla — se calcula en query time
 CREATE INDEX ON mv_cross(periodo_mes);
 CREATE INDEX ON mv_cross(periodo_mes, nombre_programa);
 CREATE INDEX ON mv_cross(periodo_mes, provincia);
@@ -248,12 +265,16 @@ Genera datos realistas para desarrollo y testing a 4 escalas. Cada beneficiario 
 ## Cache: FileSystemCache
 
 ```python
+CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
+
 cache_config = {
     "CACHE_TYPE": "FileSystemCache",
-    "CACHE_DIR": "/tmp/rub-cache",
+    "CACHE_DIR": CACHE_DIR,
     "CACHE_DEFAULT_TIMEOUT": 3600,
 }
 ```
+
+Se usa un directorio relativo al proyecto (`.cache/`) en vez de `/tmp` para que el cache sobreviva restarts del host. Agregar `.cache/` a `.gitignore`.
 
 - Sin Redis — zero dependencias externas
 - Compartido entre todos los workers de Gunicorn (a diferencia de SimpleCache que es per-process)
