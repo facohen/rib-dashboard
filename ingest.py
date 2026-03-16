@@ -1060,7 +1060,7 @@ _log_path = None  # se setea en menu()
 def _create_matviews(conn):
     """Ejecuta create_matviews.py como módulo."""
     import subprocess
-    log.info("\n  Creando vistas materializadas...")
+    log.info("\n  Creando tablas materializadas...")
     t0 = time.time()
     result = subprocess.run(
         [sys.executable, "create_matviews.py"],
@@ -1078,12 +1078,13 @@ def _create_matviews(conn):
                 log.error(f"    {line}")
     else:
         log.info(f"  Matviews creadas en {elapsed:.1f}s")
+        _clear_cache()
 
 
 def _refresh_matviews(conn):
     """Ejecuta refresh_matviews.py como módulo."""
     import subprocess
-    log.info("\n  Refrescando vistas materializadas...")
+    log.info("\n  Refrescando tablas materializadas...")
     t0 = time.time()
     result = subprocess.run(
         [sys.executable, "refresh_matviews.py"],
@@ -1101,6 +1102,16 @@ def _refresh_matviews(conn):
                 log.error(f"    {line}")
     else:
         log.info(f"  Matviews refrescadas en {elapsed:.1f}s")
+        _clear_cache()
+
+
+def _clear_cache():
+    """Limpia FileSystemCache después de crear/refrescar MVs."""
+    import shutil
+    cache_dir = os.path.join(os.path.dirname(__file__), ".cache")
+    if os.path.isdir(cache_dir):
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        log.info("  Cache limpiado (.cache/)")
 
 
 def _matviews_status(conn):
