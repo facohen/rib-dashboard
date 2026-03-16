@@ -237,10 +237,10 @@ def run():
     conn.commit()
 
     # Boost memory for heavy aggregation queries (default 4MB spills to disk)
-    cur.execute("SET work_mem = '256MB'")
-    cur.execute("SET maintenance_work_mem = '512MB'")
+    cur.execute("SET work_mem = '1GB'")
+    cur.execute("SET maintenance_work_mem = '2GB'")
     # Use more parallel workers for large scans/aggregations
-    cur.execute("SET max_parallel_workers_per_gather = 4")
+    cur.execute("SET max_parallel_workers_per_gather = 8")
 
     # Create each table
     for name, create_sql, indexes in TABLES:

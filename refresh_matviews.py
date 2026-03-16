@@ -33,9 +33,9 @@ def run():
     print("=" * 60)
 
     # Boost memory for heavy aggregation queries
-    cur.execute("SET work_mem = '256MB'")
-    cur.execute("SET maintenance_work_mem = '512MB'")
-    cur.execute("SET max_parallel_workers_per_gather = 4")
+    cur.execute("SET work_mem = '1GB'")
+    cur.execute("SET maintenance_work_mem = '2GB'")
+    cur.execute("SET max_parallel_workers_per_gather = 8")
 
     # Step 1: Create shadow tables (long operation, doesn't block readers)
     for name, create_sql, indexes in TABLES:
