@@ -35,6 +35,9 @@ from psycopg2.extras import execute_values
 from ingest_config import DATASET_CONFIGS, DATASETS_ROOT, PROVINCIA_NORMALIZE
 from ingest_log import setup_logger, log_report
 
+from config import load_dotenv
+load_dotenv()
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError(

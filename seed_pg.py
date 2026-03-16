@@ -13,6 +13,9 @@ import psycopg2
 from psycopg2.extras import execute_values
 from werkzeug.security import generate_password_hash
 
+from config import load_dotenv
+load_dotenv()
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError(
