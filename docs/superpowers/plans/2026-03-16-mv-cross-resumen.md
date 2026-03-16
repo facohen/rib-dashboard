@@ -415,54 +415,54 @@ Consistency check validates invariants 1-3 from above against live data.
 
 ## Implementation Tasks
 
-### Task 1: create_matviews.py — CURRENT
-- [ ] Replace `MATVIEWS` list with `TABLES` list: `[(name, create_sql, indexes), ...]`
-- [ ] Use exact mv_cross and mv_resumen SQL from this document
-- [ ] Remove `REFRESH_FUNCTION` constant and its execution
-- [ ] Drop logic: `DROP MATERIALIZED VIEW IF EXISTS` for 11 legacy MVs, `DROP TABLE IF EXISTS` for new tables + shadows, `DROP FUNCTION IF EXISTS refresh_all_matviews()`
-- [ ] Keep PERIODS_TABLE and PROVINCIAS_TABLE unchanged
-- [ ] Update prints: "tablas materializadas"
-- [ ] Verify: `seed --small && create` → mv_cross ~60-65K, mv_resumen ~14K
-- [ ] Verify invariant 1: mv_resumen personas = raw distinct (zero diff all periods)
+### Task 1: create_matviews.py — DONE
+- [x] Replace `MATVIEWS` list with `TABLES` list: `[(name, create_sql, indexes), ...]`
+- [x] Use exact mv_cross and mv_resumen SQL from this document
+- [x] Remove `REFRESH_FUNCTION` constant and its execution
+- [x] Drop logic: `DROP MATERIALIZED VIEW IF EXISTS` for 11 legacy MVs, `DROP TABLE IF EXISTS` for new tables + shadows, `DROP FUNCTION IF EXISTS refresh_all_matviews()`
+- [x] Keep PERIODS_TABLE and PROVINCIAS_TABLE unchanged
+- [x] Update prints: "tablas materializadas"
+- [x] Verify: `seed --small && create` → mv_cross ~60-65K, mv_resumen ~14K
+- [x] Verify invariant 1: mv_resumen personas = raw distinct (zero diff all periods)
 
 ### Task 2: refresh_matviews.py
-- [ ] Import `TABLES` from `create_matviews.py`
-- [ ] Implement 3-step blue/green from this document
-- [ ] Keep lookup refresh (TRUNCATE + INSERT for periods, provincias_lookup)
-- [ ] ANALYZE: `["mv_cross", "mv_resumen", "periods", "provincias_lookup"]`
-- [ ] Keep cache-clear POST (best-effort)
-- [ ] Verify: swap < 5ms, row counts match create
+- [x] Import `TABLES` from `create_matviews.py`
+- [x] Implement 3-step blue/green from this document
+- [x] Keep lookup refresh (TRUNCATE + INSERT for periods, provincias_lookup)
+- [x] ANALYZE: `["mv_cross", "mv_resumen", "periods", "provincias_lookup"]`
+- [x] Keep cache-clear POST (best-effort)
+- [x] Verify: swap < 5ms, row counts match create
 
 ### Task 3: queries.py
-- [ ] Add `_use_resumen()` function from this document
-- [ ] Add `table` parameter to `_cross_query()` (default None → auto-route)
-- [ ] Rewrite `get_summary()`: agg_table routing, cant_programas from mv_cross, concentración from agg_table, cobertura=total_benef, tasaNoIdentificados=0
-- [ ] Fix `get_by_sexo()`: CASE expression for label, GROUP BY sexo only, table routing
-- [ ] Update `get_by_grupo_etario()`: table routing
-- [ ] Update `get_evolucion()`: table routing, preserve grupo_etario exclusion
-- [ ] Update module docstring
-- [ ] Verify all API response shapes unchanged
+- [x] Add `_use_resumen()` function from this document
+- [x] Add `table` parameter to `_cross_query()` (default None → auto-route)
+- [x] Rewrite `get_summary()`: agg_table routing, cant_programas from mv_cross, concentración from agg_table, cobertura=total_benef, tasaNoIdentificados=0
+- [x] Fix `get_by_sexo()`: CASE expression for label, GROUP BY sexo only, table routing
+- [x] Update `get_by_grupo_etario()`: table routing
+- [x] Update `get_evolucion()`: table routing, preserve grupo_etario exclusion
+- [x] Update module docstring
+- [x] Verify all API response shapes unchanged
 
 ### Task 4: app.py + .gitignore
-- [ ] SimpleCache → FileSystemCache (code from this document)
-- [ ] Health endpoint: `information_schema.tables` for mv_cross + mv_resumen, report `{count}/2`
-- [ ] Add `.cache/` to `.gitignore`
-- [ ] Verify: health returns `{"matviews": "2/2", "cache": "FileSystemCache"}`
+- [x] SimpleCache → FileSystemCache (code from this document)
+- [x] Health endpoint: `information_schema.tables` for mv_cross + mv_resumen, report `{count}/2`
+- [x] Add `.cache/` to `.gitignore`
+- [x] Verify: health returns `{"matviews": "2/2", "cache": "FileSystemCache"}`
 
 ### Task 5: ingest.py
-- [ ] Delete `_check_redis()` function
-- [ ] Remove menu option [9] and handler
-- [ ] Update menu text for [5][6][7]
-- [ ] Update `_matviews_status()`: query `information_schema.tables` not `pg_matviews`
-- [ ] Rewrite `_check_consistency()`: validate invariants 1-3
+- [x] Delete `_check_redis()` function
+- [x] Remove menu option [9] and handler
+- [x] Update menu text for [5][6][7]
+- [x] Update `_matviews_status()`: query `information_schema.tables` not `pg_matviews`
+- [x] Rewrite `_check_consistency()`: validate invariants 1-3
 
 ### Task 6: CLAUDE.md
-- [ ] 2 physical tables (not 11 MVs)
-- [ ] FileSystemCache (not Redis/SimpleCache)
-- [ ] Blue/green refresh
-- [ ] `_use_resumen()` routing
-- [ ] Menu without [9]
-- [ ] Remove REDIS_URL from env vars
+- [x] 2 physical tables (not 11 MVs)
+- [x] FileSystemCache (not Redis/SimpleCache)
+- [x] Blue/green refresh
+- [x] `_use_resumen()` routing
+- [x] Menu without [9]
+- [x] Remove REDIS_URL from env vars
 
 ### Dependencies
 
@@ -475,6 +475,28 @@ Tasks 1-5 ──→ Task 6
 ```
 
 Tasks 2, 3, 4 can run in parallel after Task 1.
+
+---
+
+## Fixes Found During Implementation
+
+### Fix 1: Drop order in create_matviews.py
+
+**Problem:** `DROP MATERIALIZED VIEW IF EXISTS mv_cross` fails if mv_cross already exists as a physical table (from a previous run of the new code).
+
+**Fix:** Drop physical tables FIRST, then drop legacy materialized views. This handles both cases: mv_cross as table (new code) or mv_cross as MV (old code).
+
+### Fix 2: Auto-clear FileSystemCache after create/refresh
+
+**Problem:** After `[D]` seed + `[5]` create MVs, the `.cache/` directory still contains results from the previous dataset. API serves stale data until the 1-hour TTL expires.
+
+**Fix:** `_create_matviews()` and `_refresh_matviews()` in ingest.py now call `_clear_cache()` on success, which removes `.cache/` via `shutil.rmtree()`.
+
+### Fix 3: Auto-load .env for DATABASE_URL
+
+**Problem:** Every `python app.py` / `python seed_pg.py` / `python ingest.py` requires `export DATABASE_URL=...` first. Users forget and get a RuntimeError.
+
+**Fix:** `config.py` exports `load_dotenv()` that reads `.env` if present (using `os.environ.setdefault` so explicit exports still take precedence). Called at import time in config.py, seed_pg.py, and ingest.py. `.env` file stays in `.gitignore`.
 
 ---
 
