@@ -1389,15 +1389,13 @@ def menu():
         opcion = input("\n  Seleccionar opción: ").strip()
 
         if opcion.upper() == "I":
+            conn.close()  # Cerrar ANTES para no bloquear DROP TABLE
             _init_schema()
-            # Reconectar por si el schema cambió
-            conn.close()
             conn = get_conn()
 
         elif opcion.upper() == "D":
+            conn.close()  # Cerrar ANTES para no bloquear DROP TABLE
             _seed_demo()
-            # Reconectar por si los datos cambiaron
-            conn.close()
             conn = get_conn()
 
         elif opcion.upper() == "C":
