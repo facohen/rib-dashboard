@@ -3,14 +3,20 @@ seed_pg.py — Generador de datos masivos para PostgreSQL
 Genera 8M beneficiarios, ~200M benefits, pagos correspondientes.
 
 Uso:
-    DATABASE_URL=postgresql://user:pass@host/rub python seed_pg.py
-    DATABASE_URL=postgresql://user:pass@host/rub python seed_pg.py --small   # 10K para test rápido
-    DATABASE_URL=postgresql://user:pass@host/rub python seed_pg.py --1m      # 1M registros
+    python seed_pg.py              # 8M (default)
+    python seed_pg.py --small      # 10K para test rápido
+    python seed_pg.py --medium     # 100K
+    python seed_pg.py --1m         # 1M registros
+
+Optimizado con numpy vectorizado + COPY para máxima velocidad.
 """
-import os, sys, random, time
-from datetime import date, timedelta
+import io
+import os
+import sys
+import time
+
+import numpy as np
 import psycopg2
-from psycopg2.extras import execute_values
 from werkzeug.security import generate_password_hash
 
 from config import load_dotenv
@@ -22,7 +28,6 @@ if not DATABASE_URL:
         "DATABASE_URL no está seteada. Exportala antes de iniciar:\n"
         "  export DATABASE_URL=postgresql://user:pass@host/rub"
     )
-BATCH_SIZE = 10_000
 
 # ──────────────────────────────────────────────
 # Datos de referencia
@@ -54,7 +59,6 @@ PROVINCIAS = [
     ("Tierra del Fuego", "94", [("Ushuaia","94007"),("Río Grande","94014")]),
 ]
 
-# Pesos poblacionales aproximados por provincia
 PROV_WEIGHTS = [38, 8, 8, 4, 4, 3, 3, 2, 3, 2, 3, 2, 2, 1, 1, 1, 1, 1, 2, 1, 1, 1, 0.5]
 
 SECRETARIAS = [
@@ -91,28 +95,31 @@ APELLIDOS = ["García","Rodríguez","González","Fernández","López","Martínez
 PERIODOS = ["2025-04","2025-05","2025-06","2025-07","2025-08","2025-09",
             "2025-10","2025-11","2025-12","2026-01","2026-02","2026-03"]
 
-INCOMP_PAIRS = [(0,3),(1,7),(2,5),(6,7)]  # AUH↔PNC, PROGRESAR↔POTENCIAR, ALIMENTAR↔HACEMOS, ARGENTA↔POTENCIAR
+INCOMP_PAIRS = [(0,3),(1,7),(2,5),(6,7)]
+
+RANDOM_SEED = 42
 
 
 def hash_pw(pw):
     return generate_password_hash(pw)
 
 
-def cuil(idx):
-    prefixes = ["20","23","24","27"]
-    return prefixes[idx % 4] + str(20000000 + idx).zfill(8) + str(idx % 10)
+def _cuil_array(n):
+    """Generate n CUILs as numpy string array."""
+    prefixes = np.array(["20","23","24","27"])
+    nums = np.arange(20000000, 20000000 + n)
+    prefix = prefixes[np.arange(n) % 4]
+    check = (np.arange(n) % 10).astype(str)
+    return np.char.add(np.char.add(prefix, nums.astype(str)), check)
 
 
-def birth_date(group_idx):
-    base = date(2026, 3, 31)
-    ranges = [(0, 12), (13, 29), (30, 59), (60, 85)]
-    lo, hi = ranges[group_idx]
-    years = random.randint(lo, hi)
-    try:
-        d = base.replace(year=base.year - years, month=random.randint(1, 12), day=random.randint(1, 28))
-    except ValueError:
-        d = base.replace(year=base.year - years)
-    return d
+def _copy_buf(cur, table, columns, buf):
+    """COPY from StringIO buffer."""
+    buf.seek(0)
+    cur.copy_expert(
+        f"COPY {table}({','.join(columns)}) FROM STDIN WITH (FORMAT csv, NULL '\\N')",
+        buf
+    )
 
 
 # ──────────────────────────────────────────────
@@ -202,27 +209,24 @@ CREATE INDEX idx_ben_cuil_trgm ON beneficiaries USING gin(cuil gin_trgm_ops);
 """
 
 
-RANDOM_SEED = 42
-
-
 def run(num_beneficiaries=8_000_000):
-    random.seed(RANDOM_SEED)
+    rng = np.random.default_rng(RANDOM_SEED)
 
     conn = psycopg2.connect(DATABASE_URL)
     conn.autocommit = False
     cur = conn.cursor()
 
     t0 = time.time()
-    print(f"🏗️  Generando {num_beneficiaries:,} beneficiarios en PostgreSQL...")
+    n = num_beneficiaries
+    print(f"🏗️  Generando {n:,} beneficiarios en PostgreSQL...")
     print(f"   URL: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
     print(f"   Random seed: {RANDOM_SEED}")
 
-    # ── Schema (crear si no existe) ──
+    # ── Schema ──
     print("\n📋 Creando schema...")
     cur.execute(SCHEMA)
     conn.commit()
 
-    # ── Truncar tablas para nueva distribución ──
     print("🗑️  Truncando tablas...")
     cur.execute("TRUNCATE payments, benefits, incompatibility_rules, programs, beneficiaries, users RESTART IDENTITY CASCADE")
     conn.commit()
@@ -242,7 +246,12 @@ def run(num_beneficiaries=8_000_000):
                     (SECRETARIAS[sec_idx], nombre))
         prog_ids.append(cur.fetchone()[0])
     conn.commit()
-    print(f"  ✅ Programas creados: {len(prog_ids)}")
+    n_progs = len(prog_ids)
+    prog_ids_arr = np.array(prog_ids)
+    print(f"  ✅ Programas creados: {n_progs}")
+
+    # Base montos por secretaría: [80K, 95K, 60K]
+    prog_base_monto = np.array([80000, 80000, 80000, 95000, 95000, 95000, 60000, 60000])
 
     # ── Incompatibilidades ──
     for a, b in INCOMP_PAIRS:
@@ -253,168 +262,204 @@ def run(num_beneficiaries=8_000_000):
     conn.commit()
     print(f"  ✅ Reglas de incompatibilidad: {len(INCOMP_PAIRS)}")
 
-    # ── Beneficiarios ──
-    # Distribución etaria: niñez 20%, jóvenes 30%, adultos 35%, mayores 15%
-    group_weights = [0.20, 0.30, 0.35, 0.15]
-    sexo_pool = ["M","M","M","F","F","F","F","F","X","NI"]
+    # ── Beneficiarios (vectorizado) ──
+    print(f"\n👥 Generando {n:,} beneficiarios...")
+    t_ben = time.time()
 
-    # Normalizar pesos provinciales
+    # Pre-flatten province/department data for vectorized indexing
+    prov_names = []
+    prov_codes = []
+    depto_names = []
+    depto_codes = []
+    prov_depto_offsets = []  # (start, count) for each province's departments
+    flat_deptos = []
+    for prov_name, prov_code, deptos in PROVINCIAS:
+        start = len(flat_deptos)
+        for d_name, d_code in deptos:
+            flat_deptos.append((prov_name, prov_code, d_name, d_code))
+        prov_depto_offsets.append((start, len(deptos)))
+
+    # Build per-province probability → flat depto probability
     total_w = sum(PROV_WEIGHTS)
-    prov_probs = [w / total_w for w in PROV_WEIGHTS]
+    flat_probs = []
+    for i, (start, count) in enumerate(prov_depto_offsets):
+        p = PROV_WEIGHTS[i] / total_w / count
+        flat_probs.extend([p] * count)
+    flat_probs = np.array(flat_probs)
+    flat_probs /= flat_probs.sum()  # normalize
 
-    print(f"\n👥 Insertando {num_beneficiaries:,} beneficiarios...")
-    ben_batch = []
-    # Track first_id for later reference
-    cur.execute("SELECT COALESCE(MAX(id), 0) FROM beneficiaries")
-    first_ben_id = cur.fetchone()[0] + 1
+    depto_idx = rng.choice(len(flat_deptos), size=n, p=flat_probs)
 
-    for i in range(num_beneficiaries):
-        group = random.choices([0,1,2,3], weights=group_weights)[0]
-        sexo = random.choice(sexo_pool)
-        nom = random.choice(NOMBRES_M if sexo == "M" else NOMBRES_F if sexo == "F" else NOMBRES_M + NOMBRES_F)
-        prov_idx = random.choices(range(len(PROVINCIAS)), weights=prov_probs)[0]
-        prov = PROVINCIAS[prov_idx]
-        depto = random.choice(prov[2])
+    # Extract province/depto arrays
+    flat_prov_names = np.array([fd[0] for fd in flat_deptos])
+    flat_prov_codes = np.array([fd[1] for fd in flat_deptos])
+    flat_depto_names = np.array([fd[2] for fd in flat_deptos])
+    flat_depto_codes = np.array([fd[3] for fd in flat_deptos])
 
-        ben_batch.append((
-            cuil(i), nom, random.choice(APELLIDOS), sexo,
-            birth_date(group),
-            prov[0], prov[1], depto[0], depto[1],
-            str(1000 + random.randint(0, 8999))
-        ))
+    ben_provincia = flat_prov_names[depto_idx]
+    ben_cod_prov = flat_prov_codes[depto_idx]
+    ben_depto = flat_depto_names[depto_idx]
+    ben_cod_depto = flat_depto_codes[depto_idx]
 
-        if len(ben_batch) >= BATCH_SIZE:
-            execute_values(cur, """
-                INSERT INTO beneficiaries(cuil,nombre,apellido,sexo,fecha_nacimiento,
-                    provincia,codigo_provincia_indec,departamento,codigo_departamento_indec,cp)
-                VALUES %s
-            """, ben_batch)
-            conn.commit()
-            done = i + 1
-            elapsed = time.time() - t0
-            rate = done / elapsed
-            eta = (num_beneficiaries - done) / rate if rate > 0 else 0
-            print(f"  {done:>10,} / {num_beneficiaries:,}  ({done*100//num_beneficiaries}%)  "
-                  f"[{rate:,.0f}/s, ETA {eta/60:.0f}m]", end="\r")
-            ben_batch = []
+    # Sexo: M 30%, F 50%, X 10%, NI 10%
+    sexo_pool = np.array(["M","M","M","F","F","F","F","F","X","NI"])
+    ben_sexo = sexo_pool[rng.integers(0, len(sexo_pool), size=n)]
 
-    if ben_batch:
-        execute_values(cur, """
-            INSERT INTO beneficiaries(cuil,nombre,apellido,sexo,fecha_nacimiento,
-                provincia,codigo_provincia_indec,departamento,codigo_departamento_indec,cp)
-            VALUES %s
-        """, ben_batch)
-        conn.commit()
+    # Age groups: niñez 20%, jóvenes 30%, adultos 35%, mayores 15%
+    age_groups = rng.choice(4, size=n, p=[0.20, 0.30, 0.35, 0.15])
+    age_ranges = [(0, 12), (13, 29), (30, 59), (60, 85)]
+    base_date = np.datetime64('2026-03-31')
+    years = np.empty(n, dtype=np.int32)
+    for g in range(4):
+        mask = age_groups == g
+        lo, hi = age_ranges[g]
+        years[mask] = rng.integers(lo, hi + 1, size=mask.sum())
+    months = rng.integers(1, 13, size=n)
+    days = rng.integers(1, 29, size=n)
+    # Build date strings YYYY-MM-DD
+    y_part = (2026 - years).astype(str)
+    m_part = np.char.zfill(months.astype(str), 2)
+    d_part = np.char.zfill(days.astype(str), 2)
+    ben_fecha = np.char.add(np.char.add(np.char.add(np.char.add(y_part, '-'), m_part), '-'), d_part)
 
-    print(f"\n  ✅ Beneficiarios: {num_beneficiaries:,} ({time.time()-t0:.0f}s)")
+    # Names
+    all_nombres_m = np.array(NOMBRES_M)
+    all_nombres_f = np.array(NOMBRES_F)
+    all_nombres_all = np.array(NOMBRES_M + NOMBRES_F)
+    all_apellidos = np.array(APELLIDOS)
 
-    # ── Benefits y pagos por periodo ──
-    # Concentración: 50% 1 prest, 30% 2, 15% 3+, 5% inválidos (sin beneficiary_id)
-    conc_weights = [0.50, 0.30, 0.15, 0.05]  # 1, 2, 3+, inválido
-    num_invalidos = int(num_beneficiaries * 0.05)
-    num_validos = num_beneficiaries - num_invalidos
+    ben_nombre = np.empty(n, dtype='U20')
+    mask_m = ben_sexo == 'M'
+    mask_f = ben_sexo == 'F'
+    mask_other = ~mask_m & ~mask_f
+    ben_nombre[mask_m] = all_nombres_m[rng.integers(0, len(all_nombres_m), size=mask_m.sum())]
+    ben_nombre[mask_f] = all_nombres_f[rng.integers(0, len(all_nombres_f), size=mask_f.sum())]
+    ben_nombre[mask_other] = all_nombres_all[rng.integers(0, len(all_nombres_all), size=mask_other.sum())]
+    ben_apellido = all_apellidos[rng.integers(0, len(all_apellidos), size=n)]
+
+    # CUILs and CPs
+    ben_cuil = _cuil_array(n)
+    ben_cp = (1000 + rng.integers(0, 9000, size=n)).astype(str)
+
+    # Write via COPY
+    print(f"  Insertando via COPY...", end=" ", flush=True)
+    buf = io.StringIO()
+    for i in range(n):
+        buf.write(f"{ben_cuil[i]},{ben_nombre[i]},{ben_apellido[i]},{ben_sexo[i]},"
+                  f"{ben_fecha[i]},{ben_provincia[i]},{ben_cod_prov[i]},"
+                  f"{ben_depto[i]},{ben_cod_depto[i]},{ben_cp[i]}\n")
+    _copy_buf(cur, "beneficiaries",
+              ["cuil","nombre","apellido","sexo","fecha_nacimiento",
+               "provincia","codigo_provincia_indec","departamento",
+               "codigo_departamento_indec","cp"], buf)
+    conn.commit()
+    buf.close()
+
+    # Get first beneficiary ID
+    cur.execute("SELECT MIN(id) FROM beneficiaries")
+    first_ben_id = cur.fetchone()[0]
+
+    print(f"OK ({n:,} rows, {time.time()-t_ben:.0f}s)")
+
+    # ── Benefits + Payments per period (vectorized) ──
+    # Pre-compute per-beneficiary program assignments
+    # Concentración: 50% 1 prog, 30% 2 progs, 20% 3+ progs
+    conc_r = rng.random(n)
+    cant_progs = np.where(conc_r < 0.50, 1, np.where(conc_r < 0.80, 2, 3))
+
+    # 5% inválidos (no beneficiary_id)
+    num_invalidos = int(n * 0.05)
+    is_invalido = np.zeros(n, dtype=bool)
+    is_invalido[n - num_invalidos:] = True
+
+    # Force incompatibilities for ~2% of valid beneficiaries
+    force_incomp = rng.random(n) < 0.02
+    force_incomp[is_invalido] = False
 
     for periodo in PERIODOS:
         t_per = time.time()
         y, m = int(periodo[:4]), int(periodo[5:])
-        print(f"\n📅 Periodo {periodo}...")
+        print(f"\n📅 Periodo {periodo}...", end=" ", flush=True)
 
-        ben_batch_b = []
-        pay_batch = []
+        ben_buf = io.StringIO()
+        pay_buf = io.StringIO()
         benefits_count = 0
         payments_count = 0
 
-        for i in range(num_beneficiaries):
+        # Pre-generate random estado (8% INACTIVO)
+        # Max possible benefits: ~1.64 per person on average, but we generate per-person
+        # So we batch generate enough random numbers
+
+        for i in range(n):
             ben_id = first_ben_id + i
 
-            # 5% inválidos
-            if i >= num_validos:
-                prog = random.choice(prog_ids)
-                ben_batch_b.append((
-                    None,
-                    None if random.random() > 0.5 else "00000000000",
-                    prog, periodo, "ACTIVO"
-                ))
+            if is_invalido[i]:
+                prog = prog_ids_arr[rng.integers(0, n_progs)]
+                cuil_raw = "\\N" if rng.random() > 0.5 else "00000000000"
+                ben_buf.write(f"\\N,{cuil_raw},{prog},{periodo},ACTIVO\n")
                 benefits_count += 1
+                continue
+
+            cant = int(cant_progs[i])
+
+            if force_incomp[i]:
+                pair_idx = rng.integers(0, len(INCOMP_PAIRS))
+                a, b = INCOMP_PAIRS[pair_idx]
+                progs = [prog_ids[a], prog_ids[b]]
+                if cant >= 3:
+                    extras = [p for p in prog_ids if p not in progs]
+                    progs.append(extras[rng.integers(0, len(extras))])
             else:
-                # Concentración
-                r = random.random()
-                if r < 0.50:
-                    cant = 1
-                elif r < 0.80:
-                    cant = 2
-                else:
-                    cant = 3
+                perm = rng.permutation(n_progs)
+                progs = prog_ids_arr[perm[:cant]].tolist()
 
-                progs_elegidos = random.sample(prog_ids, min(cant, len(prog_ids)))
+            cuil_str = ben_cuil[i]
+            for pid in progs:
+                estado = "INACTIVO" if rng.random() < 0.08 else "ACTIVO"
+                ben_buf.write(f"{ben_id},{cuil_str},{pid},{periodo},{estado}\n")
+                benefits_count += 1
 
-                # Forzar violaciones de incompatibilidad (~2% de beneficiarios en cada periodo)
-                if random.random() < 0.02:
-                    pair = random.choice(INCOMP_PAIRS)
-                    progs_elegidos = [prog_ids[pair[0]], prog_ids[pair[1]]]
-                    if cant >= 3:
-                        extra = random.choice([p for p in prog_ids if p not in progs_elegidos])
-                        progs_elegidos.append(extra)
+                if estado == "ACTIVO":
+                    pidx = pid - prog_ids[0]  # IDs are sequential
+                    base = prog_base_monto[pidx]
+                    monto = base + rng.integers(-10000, 20001)
+                    day = rng.integers(1, 29)
+                    pay_buf.write(f"{ben_id},{pid},{y}-{m:02d}-{day:02d},{periodo},{monto}\n")
+                    payments_count += 1
 
-                for pid in progs_elegidos:
-                    estado = "INACTIVO" if random.random() < 0.08 else "ACTIVO"
-                    ben_batch_b.append((ben_id, cuil(i), pid, periodo, estado))
-                    benefits_count += 1
-
-                    if estado == "ACTIVO":
-                        pidx = prog_ids.index(pid)
-                        sec = PROGRAMAS[pidx][1]
-                        base = [80000, 95000, 60000][sec]
-                        monto = base + random.randint(-10000, 20000)
-                        day = random.randint(1, 28)
-                        pay_batch.append((
-                            ben_id, pid,
-                            date(y, m, day),
-                            periodo, monto
-                        ))
-                        payments_count += 1
-
-            # Flush benefits batch
-            if len(ben_batch_b) >= BATCH_SIZE:
-                execute_values(cur, """
-                    INSERT INTO benefits(beneficiary_id,cuil_raw,program_id,periodo_mes,estado_beneficio)
-                    VALUES %s
-                """, ben_batch_b)
-                ben_batch_b = []
-
-            # Flush payments batch
-            if len(pay_batch) >= BATCH_SIZE:
-                execute_values(cur, """
-                    INSERT INTO payments(beneficiary_id,program_id,fecha_pago,periodo_mes,monto_prestacion)
-                    VALUES %s
-                """, pay_batch)
-                pay_batch = []
-
-            if (i + 1) % 500_000 == 0:
+            if i > 0 and i % 500_000 == 0:
+                # Flush intermediate to avoid huge memory
+                _copy_buf(cur, "benefits",
+                          ["beneficiary_id","cuil_raw","program_id","periodo_mes","estado_beneficio"],
+                          ben_buf)
+                _copy_buf(cur, "payments",
+                          ["beneficiary_id","program_id","fecha_pago","periodo_mes","monto_prestacion"],
+                          pay_buf)
                 conn.commit()
+                ben_buf.close()
+                pay_buf.close()
+                ben_buf = io.StringIO()
+                pay_buf = io.StringIO()
                 elapsed = time.time() - t_per
                 rate = (i + 1) / elapsed
-                print(f"    {i+1:>10,} / {num_beneficiaries:,}  "
-                      f"[{rate:,.0f}/s]", end="\r")
+                print(f"{i+1:,} [{rate:,.0f}/s]", end=" ", flush=True)
 
         # Flush remaining
-        if ben_batch_b:
-            execute_values(cur, """
-                INSERT INTO benefits(beneficiary_id,cuil_raw,program_id,periodo_mes,estado_beneficio)
-                VALUES %s
-            """, ben_batch_b)
-        if pay_batch:
-            execute_values(cur, """
-                INSERT INTO payments(beneficiary_id,program_id,fecha_pago,periodo_mes,monto_prestacion)
-                VALUES %s
-            """, pay_batch)
+        _copy_buf(cur, "benefits",
+                  ["beneficiary_id","cuil_raw","program_id","periodo_mes","estado_beneficio"],
+                  ben_buf)
+        _copy_buf(cur, "payments",
+                  ["beneficiary_id","program_id","fecha_pago","periodo_mes","monto_prestacion"],
+                  pay_buf)
         conn.commit()
+        ben_buf.close()
+        pay_buf.close()
 
         per_time = time.time() - t_per
-        print(f"  ✅ {periodo}: {benefits_count:,} benefits, {payments_count:,} pagos ({per_time:.0f}s)")
+        print(f"✅ {benefits_count:,} benefits, {payments_count:,} pagos ({per_time:.0f}s)")
 
     # ── Índices ──
-    print("\n📊 Creando índices (esto puede tardar unos minutos)...")
+    print("\n📊 Creando índices...")
     t_idx = time.time()
     for idx_sql in INDEXES.strip().split("\n"):
         idx_sql = idx_sql.strip()
@@ -436,14 +481,14 @@ def run(num_beneficiaries=8_000_000):
     cur.execute("SELECT COUNT(*) FROM benefits")
     nben = cur.fetchone()[0]
     cur.execute("SELECT COUNT(*) FROM payments")
-    np = cur.fetchone()[0]
+    npay = cur.fetchone()[0]
     total_time = time.time() - t0
 
     print(f"\n{'='*50}")
     print(f"🎉 Seed completado en {total_time/60:.1f} minutos")
     print(f"   Beneficiarios: {nb:,}")
     print(f"   Benefits:      {nben:,}")
-    print(f"   Pagos:         {np:,}")
+    print(f"   Pagos:         {npay:,}")
     print(f"{'='*50}")
 
     cur.close()
