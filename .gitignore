@@ -23,6 +23,9 @@ instance/
 .vscode/
 .idea/
 
+# Cache
+.cache/
+
 # OS
 .DS_Store
 Thumbs.db

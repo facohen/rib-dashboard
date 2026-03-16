@@ -3,8 +3,8 @@ queries.py — Todas las queries SQL (PostgreSQL)
 Único lugar para cambiar lógica de consultas.
 
 Estrategia de performance:
-- Todo el dashboard → queries sobre mv_cross (~100-130K filas, <10ms)
-- Cobertura/identificación → mv_cobertura (12 filas)
+- Totales deduplicados → mv_resumen (~23K filas, <10ms)
+- Desglose por programa/secretaría → mv_cross (~130-180K filas, <10ms)
 - Nominal → queries optimizadas con edad en SQL
 """
 import calendar
@@ -20,10 +20,10 @@ def _corte_date(period):
 
 
 # ──────────────────────────────────────────────
-# Cross-filter helpers for mv_cross
+# Cross-filter helpers for mv_cross / mv_resumen
 # ──────────────────────────────────────────────
 
-# Map filter keys to mv_cross columns
+# Map filter keys to table columns
 _CROSS_FILTER_MAP = {
     "secretaria": "secretaria_origen",
     "programa": "nombre_programa",
@@ -32,7 +32,7 @@ _CROSS_FILTER_MAP = {
     "grupo_etario": "grupo_etario",
 }
 
-# Map grupo_etario filter values from the frontend to groups in mv_cross
+# Map grupo_etario filter values from the frontend to groups in MVs
 _GRUPO_ETARIO_MAP = {
     "0-4 años": "0-4 años",
     "5-12 años": "5-12 años",
@@ -54,7 +54,7 @@ def _has_filters(filters):
 
 
 def _cross_where(filters, exclude=None):
-    """Build WHERE clauses and params for mv_cross from filters."""
+    """Build WHERE clauses and params from filters."""
     where = []
     params = []
     if not filters:
@@ -85,6 +85,17 @@ def _cross_where(filters, exclude=None):
     return where, params
 
 
+def _use_resumen(filters, group_col):
+    """Decide si usar mv_resumen (dedup) o mv_cross (por programa)."""
+    # Siempre mv_cross para desglose por programa o secretaria
+    if group_col in ("nombre_programa", "secretaria_origen"):
+        return False
+    # Si hay filtro de programa/secretaria activo, mv_cross
+    if filters and (filters.get("programa") or filters.get("secretaria")):
+        return False
+    return True
+
+
 _MV_COL = {
     "personas": "personas",
     "beneficios": "beneficios",
@@ -103,8 +114,10 @@ _METRIC_COL = {
 
 
 def _cross_query(conn, period, filters, group_col, metric="personas",
-                 exclude_filter=None, extra_cols=""):
-    """Generic query on mv_cross with filters, grouped by group_col."""
+                 exclude_filter=None, extra_cols="", table=None):
+    """Generic query on mv_cross/mv_resumen with filters, grouped by group_col."""
+    if table is None:
+        table = "mv_resumen" if _use_resumen(filters, group_col) else "mv_cross"
     sel = _METRIC_COL.get(metric, "SUM(personas)")
     where = ["periodo_mes = %s"]
     params = [period]
@@ -119,7 +132,7 @@ def _cross_query(conn, period, filters, group_col, metric="personas",
 
     rows = query(conn, f"""
         SELECT {group_col}{extra}, {sel} AS total
-        FROM mv_cross
+        FROM {table}
         WHERE {where_sql}
         GROUP BY {group_col}{group_extra}
         ORDER BY total DESC
@@ -162,11 +175,14 @@ def get_provincias(conn):
 
 
 # ──────────────────────────────────────────────
-# Dashboard indicators — all from mv_cross + mv_cobertura
+# Dashboard indicators — all from mv_cross + mv_resumen
 # ──────────────────────────────────────────────
 
 def get_summary(conn, period, filters=None):
-    # Aggregates from mv_cross
+    # Determine table: mv_resumen for global, mv_cross when programa/secretaria filter
+    has_prog_filter = filters and (filters.get("programa") or filters.get("secretaria"))
+    agg_table = "mv_cross" if has_prog_filter else "mv_resumen"
+
     where = ["periodo_mes = %s"]
     params = [period]
     fw, fp = _cross_where(filters)
@@ -174,26 +190,32 @@ def get_summary(conn, period, filters=None):
     params.extend(fp)
     where_sql = " AND ".join(where)
 
+    # Main aggregates from chosen table
     row = query_one(conn, f"""
         SELECT SUM(personas) AS total_benef,
                SUM(beneficios) AS total_prest,
-               SUM(montos) AS total_monto,
-               COUNT(DISTINCT nombre_programa) AS cant_programas
-        FROM mv_cross WHERE {where_sql}
+               SUM(montos) AS total_monto
+        FROM {agg_table} WHERE {where_sql}
     """, params)
 
     total_benef = int(row["total_benef"] or 0) if row else 0
     total_prest = int(row["total_prest"] or 0) if row else 0
     monto_total = float(row["total_monto"] or 0) if row else 0
-    cant_programas = int(row["cant_programas"] or 0) if row else 0
+
+    # cant_programas always from mv_cross
+    prog_row = query_one(conn, f"""
+        SELECT COUNT(DISTINCT nombre_programa) AS cant_programas
+        FROM mv_cross WHERE {where_sql}
+    """, params)
+    cant_programas = int(prog_row["cant_programas"] or 0) if prog_row else 0
 
     if total_benef == 0:
         return _empty_summary(period)
 
-    # Concentración from mv_cross (GROUP BY cant_prestaciones)
+    # Concentración from same table as main aggregates
     conc_rows = query(conn, f"""
         SELECT cant_prestaciones, SUM(personas) AS total
-        FROM mv_cross WHERE {where_sql}
+        FROM {agg_table} WHERE {where_sql}
         GROUP BY cant_prestaciones
     """, params)
     con1 = con2 = con3 = 0
@@ -206,14 +228,6 @@ def get_summary(conn, period, filters=None):
             con2 = t
         elif cp == "3+":
             con3 = t
-
-    # Cobertura + identificación from mv_cobertura (not affected by demographic filters)
-    cob = query_one(conn,
-        "SELECT * FROM mv_cobertura WHERE periodo_mes = %s", (period,))
-    cobertura = cob["cobertura"] if cob else 0
-    tasa_no_ident = round(
-        (cob["no_identificados"] / cob["total_prest"] * 100), 2
-    ) if cob and cob["total_prest"] else 0
 
     # Incompatibilidades — direct query (small, fast with indexes)
     incomp = query_one(conn, """
@@ -234,11 +248,11 @@ def get_summary(conn, period, filters=None):
 
     return {
         "period": period,
-        "cobertura": cobertura,
+        "cobertura": total_benef,
         "promedioPrestaciones": prom_prest,
         "promedioMontoPorBenef": prom_monto,
         "montoTotal": round(monto_total),
-        "tasaNoIdentificados": tasa_no_ident,
+        "tasaNoIdentificados": 0,
         "casosIncompatibilidad": incomp_count,
         "cantidadProgramas": cant_programas,
         "concentracion": {"conUna": con1, "conDos": con2, "conTresMas": con3},
@@ -300,11 +314,16 @@ def get_by_sexo(conn, period, filters=None, metric="personas"):
     params.extend(fp)
     where_sql = " AND ".join(where)
 
+    table = "mv_resumen" if _use_resumen(filters, "sexo") else "mv_cross"
+
     return query(conn, f"""
-        SELECT sexo, sexo_label AS label, {sel} AS total
-        FROM mv_cross
+        SELECT sexo,
+               CASE sexo WHEN 'M' THEN 'Masculino' WHEN 'F' THEN 'Femenino'
+                         WHEN 'X' THEN 'No binario' ELSE 'No informado' END AS label,
+               {sel} AS total
+        FROM {table}
         WHERE {where_sql}
-        GROUP BY sexo, sexo_label
+        GROUP BY sexo
         ORDER BY total DESC
     """, params)
 
@@ -318,9 +337,11 @@ def get_by_grupo_etario(conn, period, filters=None, metric="personas"):
     params.extend(fp)
     where_sql = " AND ".join(where)
 
+    table = "mv_resumen" if _use_resumen(filters, "grupo_etario") else "mv_cross"
+
     return query(conn, f"""
         SELECT grupo_etario AS grupo, {sel} AS total
-        FROM mv_cross
+        FROM {table}
         WHERE {where_sql}
         GROUP BY grupo_etario
         ORDER BY
@@ -341,6 +362,9 @@ def get_evolucion(conn, filters=None, metric="montos"):
     params = []
     # Exclude grupo_etario from evolution filters
     f = {k: v for k, v in filters.items() if k != "grupo_etario"} if filters else {}
+
+    table = "mv_resumen" if _use_resumen(f, "periodo_mes") else "mv_cross"
+
     fw, fp = _cross_where(f)
     where.extend(fw)
     params.extend(fp)
@@ -348,7 +372,7 @@ def get_evolucion(conn, filters=None, metric="montos"):
 
     return query(conn, f"""
         SELECT periodo_mes, {sel} AS total
-        FROM mv_cross
+        FROM {table}
         WHERE 1=1 {where_sql}
         GROUP BY periodo_mes
         ORDER BY periodo_mes ASC

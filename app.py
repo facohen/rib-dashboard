@@ -50,10 +50,12 @@ app.config["PERMANENT_SESSION_LIFETIME"] = 3600  # 1 hora
 csrf = CSRFProtect(app)
 
 # ──────────────────────────────────────────────
-# Cache: SimpleCache (con MVs respondiendo <10ms, es un safety net)
+# Cache: FileSystemCache (shared across Gunicorn workers)
 # ──────────────────────────────────────────────
+CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
 cache_config = {
-    "CACHE_TYPE": "SimpleCache",
+    "CACHE_TYPE": "FileSystemCache",
+    "CACHE_DIR": CACHE_DIR,
     "CACHE_DEFAULT_TIMEOUT": 3600,
 }
 cache = Cache(app, config=cache_config)
@@ -640,9 +642,9 @@ def health_api():
         checks["db"] = "error"
     try:
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM pg_matviews WHERE schemaname='public'")
+        cur.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('mv_cross', 'mv_resumen')")
         mv_count = cur.fetchone()[0]
-        checks["matviews"] = f"{mv_count}/11"
+        checks["matviews"] = f"{mv_count}/2"
     except Exception:
         checks["matviews"] = "error"
     checks["cache"] = cache_config.get("CACHE_TYPE", "unknown")

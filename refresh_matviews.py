@@ -1,5 +1,7 @@
 """
-refresh_matviews.py — Refresca las vistas materializadas (mv_cross + mv_cobertura).
+refresh_matviews.py — Refresca las tablas materializadas (mv_cross + mv_resumen).
+
+Usa patrón blue/green: crea shadow tables, indexa, swap atómico (~1ms downtime).
 
 Ejecutar después de cada carga mensual de datos:
     DATABASE_URL=postgresql://user:pass@host/rub python refresh_matviews.py
@@ -13,6 +15,8 @@ import time
 import psycopg2
 import requests
 
+from create_matviews import TABLES
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost/rub")
 APP_URL = os.environ.get("APP_URL", "http://localhost:5000")
 
@@ -24,16 +28,47 @@ def run():
 
     t0 = time.time()
     print("=" * 60)
-    print("Refrescando vistas materializadas")
+    print("Refrescando tablas materializadas (blue/green)")
     print(f"DB: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
     print("=" * 60)
 
-    # Refresh all MVs using the stored function
-    print("\nRefrescando MVs (CONCURRENTLY)...", flush=True)
-    t_mv = time.time()
-    cur.execute("SELECT refresh_all_matviews()")
+    # Step 1: Create shadow tables (long operation, doesn't block readers)
+    for name, create_sql, indexes in TABLES:
+        t_tbl = time.time()
+        print(f"\nCreando shadow {name}_new...", end=" ", flush=True)
+        cur.execute(f"DROP TABLE IF EXISTS {name}_new")
+        new_sql = create_sql.replace(f"CREATE TABLE {name}", f"CREATE TABLE {name}_new", 1)
+        cur.execute(new_sql)
+        conn.commit()
+
+        # Step 2: Create indexes on shadow (separate txn)
+        if isinstance(indexes, str):
+            indexes = [indexes]
+        for idx_sql in indexes:
+            # Replace table name in index definitions
+            cur.execute(idx_sql.replace(f" {name}(", f" {name}_new(").replace(f" {name} ", f" {name}_new "))
+        conn.commit()
+
+        cur.execute(f"SELECT COUNT(*) FROM {name}_new")
+        row_count = cur.fetchone()[0]
+        elapsed = time.time() - t_tbl
+        print(f"OK ({row_count:,} rows, {elapsed:.1f}s)")
+
+    # Step 3: Atomic swap (~1ms, single transaction)
+    print("\nSwap atómico...", end=" ", flush=True)
+    t_swap = time.time()
+    cur.execute("""
+        DROP TABLE IF EXISTS mv_cross_old;
+        ALTER TABLE mv_cross RENAME TO mv_cross_old;
+        ALTER TABLE mv_cross_new RENAME TO mv_cross;
+        DROP TABLE IF EXISTS mv_cross_old;
+        DROP TABLE IF EXISTS mv_resumen_old;
+        ALTER TABLE mv_resumen RENAME TO mv_resumen_old;
+        ALTER TABLE mv_resumen_new RENAME TO mv_resumen;
+        DROP TABLE IF EXISTS mv_resumen_old;
+    """)
     conn.commit()
-    print(f"  OK ({time.time() - t_mv:.1f}s)")
+    print(f"OK ({time.time() - t_swap:.3f}s)")
 
     # Update lookup tables
     print("Actualizando tabla periods...", end=" ", flush=True)
@@ -51,17 +86,16 @@ def run():
     # ANALYZE
     print("ANALYZE...", end=" ", flush=True)
     conn.autocommit = True
-    mvs = ["mv_cross", "mv_cobertura", "periods", "provincias_lookup"]
-    for mv in mvs:
-        cur.execute(f"ANALYZE {mv}")
+    for name in ["mv_cross", "mv_resumen", "periods", "provincias_lookup"]:
+        cur.execute(f"ANALYZE {name}")
     print("OK")
 
     # Row counts
     print("\nRow counts:")
-    for mv in mvs:
-        cur.execute(f"SELECT COUNT(*) FROM {mv}")
+    for name in ["mv_cross", "mv_resumen", "periods", "provincias_lookup"]:
+        cur.execute(f"SELECT COUNT(*) FROM {name}")
         cnt = cur.fetchone()[0]
-        print(f"  {mv}: {cnt:,}")
+        print(f"  {name}: {cnt:,}")
 
     total_time = time.time() - t0
     print(f"\nRefresh completado en {total_time:.1f}s")

@@ -15,32 +15,35 @@ python ingest.py
 # Direct commands (also available from ingest.py menu)
 python seed_pg.py              # Seed DB with 8M demo beneficiaries
 python seed_pg.py --small      # Quick test with 10K
-python create_matviews.py      # Create 11 materialized views
-python refresh_matviews.py     # Refresh MVs after data load
+python create_matviews.py      # Create 2 physical tables (mv_cross + mv_resumen)
+python refresh_matviews.py     # Blue/green refresh after data load
 python app.py                  # Dev server on http://localhost:5000
 ```
 
 ### ingest.py menu options
 ```
+  Setup:
+    [I] Inicializar base de datos (schema + índices + usuarios)
+    [D] Seedear datos demo (10K/100K/1M/8M)
   Datos:
     [1] Ver estado de la base de datos
     [2] Cargar dataset (from CSV via ingest_config.py)
     [3] Limpiar periodo específico
     [4] Limpiar TODAS las tablas de datos
   Pipeline:
-    [5] Crear vistas materializadas
-    [6] Refrescar vistas materializadas
-    [7] Ver estado de matviews
+    [5] Crear tablas materializadas (mv_cross + mv_resumen)
+    [6] Refrescar tablas materializadas
+    [7] Ver estado de tablas materializadas
     [8] Limpiar índices redundantes (Step 0)
+  Verificación:
+    [C] Check consistencia DB ↔ MVs ↔ API
   Servicios:
-    [9] Verificar conexión Redis
     [S] Servir dashboard (Flask dev)
 ```
 
 ### Environment variables
 ```bash
 export DATABASE_URL=postgresql://postgres:postgres@localhost/rub
-export REDIS_URL=redis://localhost:6379/0  # optional, falls back to SimpleCache
 ```
 
 No build step, no linting, no test suite configured.
@@ -52,13 +55,13 @@ No build step, no linting, no test suite configured.
 
 ## Architecture
 
-**Stack:** Flask (Python) backend, server-rendered Jinja2 templates, Chart.js for visualizations, PostgreSQL database, Redis cache (falls back to SimpleCache).
+**Stack:** Flask (Python) backend, server-rendered Jinja2 templates, Chart.js for visualizations, PostgreSQL database, FileSystemCache (`.cache/` dir, shared across Gunicorn workers).
 
 **Backend (`app.py`):** Single-file Flask app containing all routes, DB helpers, auth decorators (`@login_required`, `@admin_required`), and API endpoints. Connects via `DATABASE_URL` env var.
 
 **Config (`config.py`):** PostgreSQL connection pooling via `ThreadedConnectionPool` (min=2, max=10). Helpers: `get_connection()`, `put_connection()`, `query()`, `query_one()`, `execute()`.
 
-**Queries (`queries.py`):** All SQL queries with 3-tier strategy: MV fast path (no filters, <10ms) → mv_cross filtered path (<2s) → raw SQL fallback (if MVs don't exist).
+**Queries (`queries.py`):** All SQL queries with `_use_resumen()` routing: `mv_resumen` for deduplicated person totals, `mv_cross` for per-program breakdowns. Raw SQL fallback for departamento only.
 
 **Templates (`templates/`):**
 - `base.html` — Master layout with sidebar navigation and dark/light theme system
@@ -68,9 +71,13 @@ No build step, no linting, no test suite configured.
 
 **Data Model:** Users → Sessions; Beneficiaries → Benefits (per program/period) → Payments. Incompatibility rules define which program pairs conflict.
 
-**Materialized Views:** 11 MVs (~43K rows total, ~5 MB) pre-aggregate all dashboard indicators. Created by `create_matviews.py`, refreshed by `refresh_matviews.py`.
+**Materialized Tables:** 2 physical tables with blue/green refresh:
+- `mv_cross` (~130-180K rows) — per-program breakdown with 7 dimensions
+- `mv_resumen` (~23K rows) — deduplicated persons across programs (no programa/secretaria dimension)
 
-**Cache:** Redis preferred (shared across Gunicorn workers), SimpleCache fallback (per-process). 1-hour TTL. Clear via `/api/admin/clear-cache`.
+Created by `create_matviews.py`, refreshed by `refresh_matviews.py` (shadow tables + atomic swap).
+
+**Cache:** FileSystemCache (`.cache/` dir, shared across Gunicorn workers). 1-hour TTL. Clear via `/api/admin/clear-cache`.
 
 **API Routes:**
 - `/api/indicators/*` — Dashboard KPIs, filtered by `?period=` query param
