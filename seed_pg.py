@@ -341,19 +341,38 @@ def run(num_beneficiaries=8_000_000):
     ben_cuil = _cuil_array(n)
     ben_cp = (1000 + rng.integers(0, 9000, size=n)).astype(str)
 
-    # Write via COPY
+    # Write via COPY (vectorized string build)
     print(f"  Insertando via COPY...", end=" ", flush=True)
+    sep = np.full(n, ',')
+    nl = np.full(n, '\n')
+    row = np.char.add(ben_cuil, sep)
+    row = np.char.add(row, ben_nombre)
+    row = np.char.add(row, sep)
+    row = np.char.add(row, ben_apellido)
+    row = np.char.add(row, sep)
+    row = np.char.add(row, ben_sexo)
+    row = np.char.add(row, sep)
+    row = np.char.add(row, ben_fecha)
+    row = np.char.add(row, sep)
+    row = np.char.add(row, ben_provincia)
+    row = np.char.add(row, sep)
+    row = np.char.add(row, ben_cod_prov)
+    row = np.char.add(row, sep)
+    row = np.char.add(row, ben_depto)
+    row = np.char.add(row, sep)
+    row = np.char.add(row, ben_cod_depto)
+    row = np.char.add(row, sep)
+    row = np.char.add(row, ben_cp)
+    row = np.char.add(row, nl)
     buf = io.StringIO()
-    for i in range(n):
-        buf.write(f"{ben_cuil[i]},{ben_nombre[i]},{ben_apellido[i]},{ben_sexo[i]},"
-                  f"{ben_fecha[i]},{ben_provincia[i]},{ben_cod_prov[i]},"
-                  f"{ben_depto[i]},{ben_cod_depto[i]},{ben_cp[i]}\n")
+    buf.write(''.join(row))
     _copy_buf(cur, "beneficiaries",
               ["cuil","nombre","apellido","sexo","fecha_nacimiento",
                "provincia","codigo_provincia_indec","departamento",
                "codigo_departamento_indec","cp"], buf)
     conn.commit()
     buf.close()
+    del row  # free memory
 
     # Get first beneficiary ID
     cur.execute("SELECT MIN(id) FROM beneficiaries")
@@ -376,85 +395,206 @@ def run(num_beneficiaries=8_000_000):
     force_incomp = rng.random(n) < 0.02
     force_incomp[is_invalido] = False
 
+    # Pre-compute incomp pair arrays for vectorized lookup
+    incomp_a = np.array([prog_ids[a] for a, b in INCOMP_PAIRS])
+    incomp_b = np.array([prog_ids[b] for a, b in INCOMP_PAIRS])
+
+    # Pre-compute indices for each group
+    inv_idx = np.where(is_invalido)[0]
+    normal_mask = (~is_invalido) & (~force_incomp)
+    incomp_idx = np.where((~is_invalido) & force_incomp)[0]
+    group_indices = {}
+    for c in [1, 2, 3]:
+        idx = np.where(normal_mask & (cant_progs == c))[0]
+        if len(idx) > 0:
+            group_indices[c] = idx
+
+    ben_cols = ["beneficiary_id","cuil_raw","program_id","periodo_mes","estado_beneficio"]
+    pay_cols = ["beneficiary_id","program_id","fecha_pago","periodo_mes","monto_prestacion"]
+
     for periodo in PERIODOS:
         t_per = time.time()
         y, m = int(periodo[:4]), int(periodo[5:])
+        periodo_prefix = f",{periodo},"
+        date_prefix = f"{y}-{m:02d}-"
         print(f"\n📅 Periodo {periodo}...", end=" ", flush=True)
 
+        b_parts = []  # list of string arrays for benefits
+        p_parts = []  # list of string arrays for payments
+
+        # ── Invalidos (5%) ──
+        n_inv = len(inv_idx)
+        if n_inv > 0:
+            inv_progs = prog_ids_arr[rng.integers(0, n_progs, size=n_inv)]
+            inv_null = rng.random(n_inv) > 0.5
+            inv_cuils = np.where(inv_null, "\\N", "00000000000")
+            # Build: \N,cuil,prog,periodo,ACTIVO
+            lines = np.char.add("\\N,", inv_cuils)
+            lines = np.char.add(lines, ",")
+            lines = np.char.add(lines, inv_progs.astype(str))
+            lines = np.char.add(lines, periodo_prefix)
+            lines = np.char.add(lines, "ACTIVO\n")
+            b_parts.append(lines)
+
+        # ── Normal valid by cant (vectorized per group) ──
+        for cant, g_idx in group_indices.items():
+            group_n = len(g_idx)
+            g_ben_ids = (first_ben_id + g_idx).astype(str)
+            g_cuils = ben_cuil[g_idx]
+
+            # Program selection: argsort trick on random matrix
+            rand_matrix = rng.random((group_n, n_progs))
+            selected = rand_matrix.argsort(axis=1)[:, :cant]
+            prog_matrix = prog_ids_arr[selected]  # (group_n, cant)
+
+            # Estado: 8% INACTIVO
+            estado_rand = rng.random((group_n, cant))
+            is_activo = estado_rand >= 0.08
+            estado_strs = np.where(is_activo, "ACTIVO", "INACTIVO")
+
+            # Flatten: each beneficiary produces `cant` benefit rows
+            flat_bids = np.repeat(g_ben_ids, cant)
+            flat_cuils = np.repeat(g_cuils, cant)
+            flat_progs = prog_matrix.ravel().astype(str)
+            flat_estados = estado_strs.ravel()
+
+            # Build benefit lines: bid,cuil,prog,periodo,estado
+            lines = np.char.add(flat_bids, ",")
+            lines = np.char.add(lines, flat_cuils)
+            lines = np.char.add(lines, ",")
+            lines = np.char.add(lines, flat_progs)
+            lines = np.char.add(lines, periodo_prefix)
+            lines = np.char.add(lines, flat_estados)
+            lines = np.char.add(lines, "\n")
+            b_parts.append(lines)
+
+            # Payments for ACTIVO only
+            activo_flat = is_activo.ravel()
+            n_activo = activo_flat.sum()
+            if n_activo > 0:
+                a_bids = flat_bids[activo_flat]
+                a_progs_int = prog_matrix.ravel()[activo_flat]
+                a_progs_str = flat_progs[activo_flat]
+                a_prog_idx = a_progs_int - prog_ids_arr[0]
+                montos = (prog_base_monto[a_prog_idx] + rng.integers(-10000, 20001, size=n_activo)).astype(str)
+                days = np.char.zfill(rng.integers(1, 29, size=n_activo).astype(str), 2)
+                # Build: bid,prog,YYYY-MM-DD,periodo,monto
+                plines = np.char.add(a_bids, ",")
+                plines = np.char.add(plines, a_progs_str)
+                plines = np.char.add(plines, ",")
+                plines = np.char.add(plines, date_prefix)
+                plines = np.char.add(plines, days)
+                plines = np.char.add(plines, periodo_prefix)
+                plines = np.char.add(plines, montos)
+                plines = np.char.add(plines, "\n")
+                p_parts.append(plines)
+
+        # ── Force incomp (~2% of valid) ──
+        n_ic = len(incomp_idx)
+        if n_ic > 0:
+            ic_ben_ids = (first_ben_id + incomp_idx).astype(str)
+            ic_cuils = ben_cuil[incomp_idx]
+            ic_cant = cant_progs[incomp_idx]
+
+            # Pick random incompatible pairs
+            pair_sel = rng.integers(0, len(INCOMP_PAIRS), size=n_ic)
+            prog_a = incomp_a[pair_sel]
+            prog_b = incomp_b[pair_sel]
+
+            # Generate benefits for program A and B
+            for progs_col in [prog_a, prog_b]:
+                estados = np.where(rng.random(n_ic) >= 0.08, "ACTIVO", "INACTIVO")
+                progs_str = progs_col.astype(str)
+                lines = np.char.add(ic_ben_ids, ",")
+                lines = np.char.add(lines, ic_cuils)
+                lines = np.char.add(lines, ",")
+                lines = np.char.add(lines, progs_str)
+                lines = np.char.add(lines, periodo_prefix)
+                lines = np.char.add(lines, estados)
+                lines = np.char.add(lines, "\n")
+                b_parts.append(lines)
+
+                act = estados == "ACTIVO"
+                na = act.sum()
+                if na > 0:
+                    pidx = progs_col[act] - prog_ids_arr[0]
+                    montos = (prog_base_monto[pidx] + rng.integers(-10000, 20001, size=na)).astype(str)
+                    days = np.char.zfill(rng.integers(1, 29, size=na).astype(str), 2)
+                    plines = np.char.add(ic_ben_ids[act], ",")
+                    plines = np.char.add(plines, progs_str[act])
+                    plines = np.char.add(plines, ",")
+                    plines = np.char.add(plines, date_prefix)
+                    plines = np.char.add(plines, days)
+                    plines = np.char.add(plines, periodo_prefix)
+                    plines = np.char.add(plines, montos)
+                    plines = np.char.add(plines, "\n")
+                    p_parts.append(plines)
+
+            # Extra program for cant>=3
+            extra_mask = ic_cant >= 3
+            n_extra = extra_mask.sum()
+            if n_extra > 0:
+                # Pick random program avoiding the pair (vectorized: use argsort, exclude first 2)
+                e_pair_a = prog_a[extra_mask]
+                e_pair_b = prog_b[extra_mask]
+                # Random from remaining 6 programs
+                e_rand = rng.random((n_extra, n_progs))
+                # Set high value for pair programs to exclude them
+                for j in range(n_extra):
+                    e_rand[j, e_pair_a[j] - prog_ids_arr[0]] = 2.0
+                    e_rand[j, e_pair_b[j] - prog_ids_arr[0]] = 2.0
+                e_progs = prog_ids_arr[e_rand.argsort(axis=1)[:, 0]]
+                e_progs_str = e_progs.astype(str)
+                e_bids = ic_ben_ids[extra_mask]
+                e_cuils = ic_cuils[extra_mask]
+
+                estados = np.where(rng.random(n_extra) >= 0.08, "ACTIVO", "INACTIVO")
+                lines = np.char.add(e_bids, ",")
+                lines = np.char.add(lines, e_cuils)
+                lines = np.char.add(lines, ",")
+                lines = np.char.add(lines, e_progs_str)
+                lines = np.char.add(lines, periodo_prefix)
+                lines = np.char.add(lines, estados)
+                lines = np.char.add(lines, "\n")
+                b_parts.append(lines)
+
+                act = estados == "ACTIVO"
+                na = act.sum()
+                if na > 0:
+                    pidx = e_progs[act] - prog_ids_arr[0]
+                    montos = (prog_base_monto[pidx] + rng.integers(-10000, 20001, size=na)).astype(str)
+                    days = np.char.zfill(rng.integers(1, 29, size=na).astype(str), 2)
+                    plines = np.char.add(e_bids[act], ",")
+                    plines = np.char.add(plines, e_progs_str[act])
+                    plines = np.char.add(plines, ",")
+                    plines = np.char.add(plines, date_prefix)
+                    plines = np.char.add(plines, days)
+                    plines = np.char.add(plines, periodo_prefix)
+                    plines = np.char.add(plines, montos)
+                    plines = np.char.add(plines, "\n")
+                    p_parts.append(plines)
+
+        # ── Concatenate and COPY ──
+        all_ben = np.concatenate(b_parts)
+        benefits_count = len(all_ben)
         ben_buf = io.StringIO()
-        pay_buf = io.StringIO()
-        benefits_count = 0
-        payments_count = 0
-
-        # Pre-generate random estado (8% INACTIVO)
-        # Max possible benefits: ~1.64 per person on average, but we generate per-person
-        # So we batch generate enough random numbers
-
-        for i in range(n):
-            ben_id = first_ben_id + i
-
-            if is_invalido[i]:
-                prog = prog_ids_arr[rng.integers(0, n_progs)]
-                cuil_raw = "\\N" if rng.random() > 0.5 else "00000000000"
-                ben_buf.write(f"\\N,{cuil_raw},{prog},{periodo},ACTIVO\n")
-                benefits_count += 1
-                continue
-
-            cant = int(cant_progs[i])
-
-            if force_incomp[i]:
-                pair_idx = rng.integers(0, len(INCOMP_PAIRS))
-                a, b = INCOMP_PAIRS[pair_idx]
-                progs = [prog_ids[a], prog_ids[b]]
-                if cant >= 3:
-                    extras = [p for p in prog_ids if p not in progs]
-                    progs.append(extras[rng.integers(0, len(extras))])
-            else:
-                perm = rng.permutation(n_progs)
-                progs = prog_ids_arr[perm[:cant]].tolist()
-
-            cuil_str = ben_cuil[i]
-            for pid in progs:
-                estado = "INACTIVO" if rng.random() < 0.08 else "ACTIVO"
-                ben_buf.write(f"{ben_id},{cuil_str},{pid},{periodo},{estado}\n")
-                benefits_count += 1
-
-                if estado == "ACTIVO":
-                    pidx = pid - prog_ids[0]  # IDs are sequential
-                    base = prog_base_monto[pidx]
-                    monto = base + rng.integers(-10000, 20001)
-                    day = rng.integers(1, 29)
-                    pay_buf.write(f"{ben_id},{pid},{y}-{m:02d}-{day:02d},{periodo},{monto}\n")
-                    payments_count += 1
-
-            if i > 0 and i % 500_000 == 0:
-                # Flush intermediate to avoid huge memory
-                _copy_buf(cur, "benefits",
-                          ["beneficiary_id","cuil_raw","program_id","periodo_mes","estado_beneficio"],
-                          ben_buf)
-                _copy_buf(cur, "payments",
-                          ["beneficiary_id","program_id","fecha_pago","periodo_mes","monto_prestacion"],
-                          pay_buf)
-                conn.commit()
-                ben_buf.close()
-                pay_buf.close()
-                ben_buf = io.StringIO()
-                pay_buf = io.StringIO()
-                elapsed = time.time() - t_per
-                rate = (i + 1) / elapsed
-                print(f"{i+1:,} [{rate:,.0f}/s]", end=" ", flush=True)
-
-        # Flush remaining
-        _copy_buf(cur, "benefits",
-                  ["beneficiary_id","cuil_raw","program_id","periodo_mes","estado_beneficio"],
-                  ben_buf)
-        _copy_buf(cur, "payments",
-                  ["beneficiary_id","program_id","fecha_pago","periodo_mes","monto_prestacion"],
-                  pay_buf)
-        conn.commit()
+        ben_buf.write(''.join(all_ben))
+        _copy_buf(cur, "benefits", ben_cols, ben_buf)
         ben_buf.close()
-        pay_buf.close()
+        del all_ben
 
+        if p_parts:
+            all_pay = np.concatenate(p_parts)
+            payments_count = len(all_pay)
+            pay_buf = io.StringIO()
+            pay_buf.write(''.join(all_pay))
+            _copy_buf(cur, "payments", pay_cols, pay_buf)
+            pay_buf.close()
+            del all_pay
+        else:
+            payments_count = 0
+
+        conn.commit()
         per_time = time.time() - t_per
         print(f"✅ {benefits_count:,} benefits, {payments_count:,} pagos ({per_time:.0f}s)")
 
