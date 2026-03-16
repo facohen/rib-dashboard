@@ -236,9 +236,11 @@ def run():
     cur.execute("DROP FUNCTION IF EXISTS refresh_all_matviews()")
     conn.commit()
 
-    # Boost work_mem for heavy aggregation queries (default 4MB spills to disk)
+    # Boost memory for heavy aggregation queries (default 4MB spills to disk)
     cur.execute("SET work_mem = '256MB'")
     cur.execute("SET maintenance_work_mem = '512MB'")
+    # Use more parallel workers for large scans/aggregations
+    cur.execute("SET max_parallel_workers_per_gather = 4")
 
     # Create each table
     for name, create_sql, indexes in TABLES:
