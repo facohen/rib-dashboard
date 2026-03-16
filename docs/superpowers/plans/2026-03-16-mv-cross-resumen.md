@@ -498,6 +498,12 @@ Tasks 2, 3, 4 can run in parallel after Task 1.
 
 **Fix:** `config.py` exports `load_dotenv()` that reads `.env` if present (using `os.environ.setdefault` so explicit exports still take precedence). Called at import time in config.py, seed_pg.py, and ingest.py. `.env` file stays in `.gitignore`.
 
+### Fix 4: Remove $/Persona and $/Beneficio metric buttons
+
+**Problem:** The global metric toolbar had 5 buttons (Personas, Beneficios, Montos, $/Persona, $/Beneficio). The concentration chart always shows person counts from `summary.concentracion` and doesn't respond to metric changes — the derived metrics added confusion.
+
+**Fix:** Removed `monto_persona` and `monto_beneficio` buttons from `dashboard.html`. Toolbar now has 3 options: Personas | Beneficios | Montos. Simplified `isMoneyMetric()` to `globalMetric === 'montos'`.
+
 ---
 
 ## End-to-End Verification
