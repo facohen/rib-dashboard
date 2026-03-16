@@ -381,11 +381,18 @@
         document.getElementById('kpi-prom-monto').textContent = fmt(d.promedioMontoPorBenef)
         document.getElementById('kpi-cant-programas').textContent = d.cantidadProgramas
         const c = d.concentracion
+        const concValues = ['1', '2', '3+']
         makeChart('chartConcentracion', 'doughnut',
             ['1 prestación', '2 prestaciones', '3+ prestaciones'],
             [c.conUna, c.conDos, c.conTresMas],
             ['#4a67ff', '#7c3aed', '#10b981']
         )
+        if (charts['chartConcentracion']) {
+            charts['chartConcentracion'].options.onClick = (evt, elements) => {
+                if (!elements.length) return
+                setFilter('cant_prestaciones', concValues[elements[0].index])
+            }
+        }
     }
 
     async function loadSummary() {

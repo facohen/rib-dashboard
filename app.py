@@ -514,7 +514,7 @@ def _direct_response(answer, sql_query, sql_error, row_count):
 # API: Indicators (with cross-chart filtering)
 # ──────────────────────────────────────────────
 
-_FILTER_KEYS = ("secretaria", "sexo", "programa", "provincia", "departamento", "grupo_etario")
+_FILTER_KEYS = ("secretaria", "sexo", "programa", "provincia", "departamento", "grupo_etario", "cant_prestaciones")
 
 def _get_chart_filters():
     """Extract cross-chart filter params from query string."""

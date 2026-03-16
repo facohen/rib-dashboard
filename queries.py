@@ -30,6 +30,7 @@ _CROSS_FILTER_MAP = {
     "provincia": "provincia",
     "sexo": "sexo",
     "grupo_etario": "grupo_etario",
+    "cant_prestaciones": "cant_prestaciones",
 }
 
 # Map grupo_etario filter values from the frontend to groups in MVs
