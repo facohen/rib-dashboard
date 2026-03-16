@@ -133,6 +133,7 @@ DROP TABLE IF EXISTS payments CASCADE;
 DROP TABLE IF EXISTS benefits CASCADE;
 DROP TABLE IF EXISTS incompatibility_rules CASCADE;
 DROP TABLE IF EXISTS programs CASCADE;
+DROP TABLE IF EXISTS secretarias CASCADE;
 DROP TABLE IF EXISTS beneficiaries CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 
@@ -156,6 +157,11 @@ CREATE TABLE beneficiaries (
     departamento TEXT NOT NULL,
     codigo_departamento_indec TEXT NOT NULL,
     cp TEXT
+);
+
+CREATE TABLE secretarias (
+    id SERIAL PRIMARY KEY,
+    nombre TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE programs (
@@ -228,8 +234,14 @@ def run(num_beneficiaries=8_000_000):
     conn.commit()
 
     print("🗑️  Truncando tablas...")
-    cur.execute("TRUNCATE payments, benefits, incompatibility_rules, programs, beneficiaries, users RESTART IDENTITY CASCADE")
+    cur.execute("TRUNCATE payments, benefits, incompatibility_rules, programs, secretarias, beneficiaries, users RESTART IDENTITY CASCADE")
     conn.commit()
+
+    # ── Secretarías ──
+    for sec in SECRETARIAS:
+        cur.execute("INSERT INTO secretarias(nombre) VALUES(%s)", (sec,))
+    conn.commit()
+    print(f"  ✅ Secretarías creadas: {len(SECRETARIAS)}")
 
     # ── Usuarios ──
     cur.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(%s,%s,%s,%s)",

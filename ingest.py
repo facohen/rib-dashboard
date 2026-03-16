@@ -693,21 +693,20 @@ def truncate_periodo(conn, periodo):
 def db_summary(conn):
     cur = conn.cursor()
     tables = [
-        ("secretarias", "SELECT COUNT(*) FROM secretarias"),
-        ("programs", "SELECT COUNT(*) FROM programs"),
-        ("beneficiaries", "SELECT COUNT(*) FROM beneficiaries"),
-        ("benefits", "SELECT COUNT(*) FROM benefits"),
-        ("payments", "SELECT COUNT(*) FROM payments"),
-        ("incompatibility_rules", "SELECT COUNT(*) FROM incompatibility_rules"),
-        ("users", "SELECT COUNT(*) FROM users"),
+        "programs", "beneficiaries", "benefits", "payments",
+        "incompatibility_rules", "users", "secretarias",
     ]
     log.info("\n  Estado actual de la base de datos:")
     log.info(f"  {'Tabla':<25} {'Registros':>12}")
     log.info(f"  {'-'*25} {'-'*12}")
-    for name, sql in tables:
-        cur.execute(sql)
-        count = cur.fetchone()[0]
-        log.info(f"  {name:<25} {count:>12,}")
+    for name in tables:
+        try:
+            cur.execute(f"SELECT COUNT(*) FROM {name}")
+            count = cur.fetchone()[0]
+            log.info(f"  {name:<25} {count:>12,}")
+        except Exception:
+            conn.rollback()
+            # Table doesn't exist (e.g. secretarias only in real-data schema)
 
     cur.execute("""
         SELECT periodo_mes, COUNT(*) FROM benefits
