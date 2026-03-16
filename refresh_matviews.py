@@ -32,6 +32,10 @@ def run():
     print(f"DB: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
     print("=" * 60)
 
+    # Boost work_mem for heavy aggregation queries
+    cur.execute("SET work_mem = '256MB'")
+    cur.execute("SET maintenance_work_mem = '512MB'")
+
     # Step 1: Create shadow tables (long operation, doesn't block readers)
     for name, create_sql, indexes in TABLES:
         t_tbl = time.time()
