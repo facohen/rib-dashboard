@@ -1,7 +1,7 @@
 flask
 flask-caching
+flask-wtf
 psycopg2-binary
-redis
 requests
 gunicorn
 polars

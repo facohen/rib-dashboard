@@ -35,9 +35,12 @@ from psycopg2.extras import execute_values
 from ingest_config import DATASET_CONFIGS, DATASETS_ROOT, PROVINCIA_NORMALIZE
 from ingest_log import setup_logger, log_report
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://postgres:postgres@localhost/rub"
-)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL no está seteada. Exportala antes de iniciar:\n"
+        "  export DATABASE_URL=postgresql://user:pass@host/rub"
+    )
 CHUNK_SIZE = 200_000
 BATCH_SIZE = 10_000
 MAX_ROWS = 50_000  # 0 = sin límite; >0 = cortar después de N filas (modo test)
@@ -1196,6 +1199,227 @@ def _serve_dashboard():
         log.info("\n  Dashboard detenido.")
 
 
+def _init_schema():
+    """Inicializar DB: schema + índices + usuarios demo (via seed_pg.py --schema-only)."""
+    import subprocess
+    print("\n  Inicializando base de datos...")
+    result = subprocess.run([sys.executable, "seed_pg.py", "--schema-only"],
+                            env={**os.environ, "DATABASE_URL": DATABASE_URL})
+    if result.returncode == 0:
+        print("  ✅ Schema inicializado correctamente")
+    else:
+        print("  ❌ Error al inicializar schema")
+
+
+def _seed_demo():
+    """Submenu para seedear datos demo."""
+    import subprocess
+    print("\n  Seedear datos demo:")
+    print("    [1] 10K (test rápido, ~12s)")
+    print("    [2] 100K (~2min)")
+    print("    [3] 1M (~5min)")
+    print("    [4] 8M completo (~30min)")
+    print("    [0] Volver")
+    sel = input("\n  Seleccionar tamaño: ").strip()
+    flags = {"1": "--small", "2": "--medium", "3": "--1m", "4": ""}
+    if sel not in flags or sel == "0":
+        return
+    args = [sys.executable, "seed_pg.py"]
+    if flags[sel]:
+        args.append(flags[sel])
+    confirm = input(f"  Esto borra datos existentes. Continuar? (s/n): ").strip()
+    if confirm.lower() != "s":
+        return
+    result = subprocess.run(args, env={**os.environ, "DATABASE_URL": DATABASE_URL})
+    if result.returncode == 0:
+        print("  ✅ Seed completado")
+    else:
+        print("  ❌ Error durante el seed")
+
+
+def _check_consistency(conn):
+    """Check de consistencia DB ↔ MVs."""
+    cur = conn.cursor()
+    passed = 0
+    failed = 0
+    skipped = 0
+    total = 10
+
+    # 1. Schema: tablas core
+    cur.execute("""SELECT tablename FROM pg_tables WHERE schemaname='public'
+                   AND tablename IN ('beneficiaries','benefits','payments','programs',
+                                     'secretarias','users','incompatibility_rules')""")
+    tables = {r[0] for r in cur.fetchall()}
+    expected_tables = {'beneficiaries','benefits','payments','programs','users','incompatibility_rules'}
+    found_tables = len(tables & expected_tables)
+    if found_tables >= 5:
+        print(f"  ✓ Schema: {found_tables}/{len(expected_tables)} tablas core")
+        passed += 1
+    else:
+        print(f"  ✗ Schema: solo {found_tables}/{len(expected_tables)} tablas core")
+        failed += 1
+
+    # 2. Matviews existen
+    cur.execute("SELECT matviewname FROM pg_matviews WHERE schemaname='public'")
+    mvs = [r[0] for r in cur.fetchall()]
+    mv_count = len(mvs)
+    if mv_count >= 8:
+        print(f"  ✓ Matviews: {mv_count}/11")
+        passed += 1
+    elif mv_count > 0:
+        print(f"  ⚠ Matviews: {mv_count}/11 (faltan algunas)")
+        passed += 1
+    else:
+        print(f"  ✗ Matviews: 0/11 (no creadas)")
+        failed += 1
+        # Sin MVs, skip los checks de consistencia MV
+        for _ in range(6):
+            skipped += 1
+        total = 10
+
+    # 3-8. Consistencia MV si existen
+    if mv_count > 0:
+        # mv_summary vs benefits
+        try:
+            cur.execute("SELECT periodo_mes, total_benef FROM mv_summary ORDER BY periodo_mes")
+            mv_rows = cur.fetchall()
+            if mv_rows:
+                check_ok = True
+                for periodo, mv_total in mv_rows[:3]:  # check first 3 periods
+                    cur.execute("SELECT COUNT(DISTINCT beneficiary_id) FROM benefits WHERE periodo_mes=%s AND estado_beneficio='ACTIVO'", (periodo,))
+                    real_total = cur.fetchone()[0]
+                    if abs(mv_total - real_total) > 0:
+                        check_ok = False
+                        break
+                if check_ok:
+                    print(f"  ✓ mv_summary vs benefits: OK ({len(mv_rows)} periodos)")
+                    passed += 1
+                else:
+                    print(f"  ✗ mv_summary vs benefits: MISMATCH")
+                    failed += 1
+            else:
+                print(f"  ⚠ mv_summary vacío (skip)")
+                skipped += 1
+        except Exception:
+            print(f"  ⚠ mv_summary check: skip (tabla no existe)")
+            skipped += 1
+            conn.rollback()
+
+        # mv_by_provincia sums
+        try:
+            cur.execute("""SELECT s.periodo_mes, s.total_benef, COALESCE(p.suma, 0)
+                          FROM mv_summary s
+                          LEFT JOIN (SELECT periodo_mes, SUM(personas) suma FROM mv_by_provincia GROUP BY periodo_mes) p
+                          ON s.periodo_mes = p.periodo_mes
+                          LIMIT 3""")
+            rows = cur.fetchall()
+            if rows and all(r[1] == r[2] for r in rows):
+                print(f"  ✓ mv_by_provincia sums: OK")
+                passed += 1
+            elif rows:
+                print(f"  ✗ mv_by_provincia sums: MISMATCH")
+                failed += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+            conn.rollback()
+
+        # mv_by_programa sums
+        try:
+            cur.execute("""SELECT s.periodo_mes, s.total_benef, COALESCE(p.suma, 0)
+                          FROM mv_summary s
+                          LEFT JOIN (SELECT periodo_mes, SUM(personas) suma FROM mv_by_programa GROUP BY periodo_mes) p
+                          ON s.periodo_mes = p.periodo_mes
+                          LIMIT 3""")
+            rows = cur.fetchall()
+            if rows and all(r[1] == r[2] for r in rows):
+                print(f"  ✓ mv_by_programa sums: OK")
+                passed += 1
+            elif rows:
+                print(f"  ✗ mv_by_programa sums: MISMATCH")
+                failed += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+            conn.rollback()
+
+        # mv_by_sexo sums
+        try:
+            cur.execute("""SELECT s.periodo_mes, s.total_benef, COALESCE(p.suma, 0)
+                          FROM mv_summary s
+                          LEFT JOIN (SELECT periodo_mes, SUM(personas) suma FROM mv_by_sexo GROUP BY periodo_mes) p
+                          ON s.periodo_mes = p.periodo_mes
+                          LIMIT 3""")
+            rows = cur.fetchall()
+            if rows and all(r[1] == r[2] for r in rows):
+                print(f"  ✓ mv_by_sexo sums: OK")
+                passed += 1
+            elif rows:
+                print(f"  ✗ mv_by_sexo sums: MISMATCH")
+                failed += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+            conn.rollback()
+
+        # mv_concentracion sums
+        try:
+            cur.execute("""SELECT s.periodo_mes, s.total_benef,
+                              COALESCE(c.con_una + c.con_dos + c.con_tres_mas, 0)
+                          FROM mv_summary s
+                          LEFT JOIN mv_concentracion c ON s.periodo_mes = c.periodo_mes
+                          LIMIT 3""")
+            rows = cur.fetchall()
+            if rows and all(r[1] == r[2] for r in rows):
+                print(f"  ✓ mv_concentracion sums: OK")
+                passed += 1
+            elif rows:
+                print(f"  ✗ mv_concentracion sums: MISMATCH")
+                failed += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+            conn.rollback()
+
+        # Invariantes: identificados + no_identificados == total_prest
+        try:
+            cur.execute("""SELECT periodo_mes, total_prest, identificados, no_identificados
+                          FROM mv_summary LIMIT 3""")
+            rows = cur.fetchall()
+            if rows and all(r[1] == r[2] + r[3] for r in rows):
+                print(f"  ✓ Invariantes: OK")
+                passed += 1
+            elif rows:
+                print(f"  ✗ Invariantes: identificados + no_identificados != total_prest")
+                failed += 1
+            else:
+                skipped += 1
+        except Exception:
+            skipped += 1
+            conn.rollback()
+
+    # 9. API check
+    try:
+        import requests as req
+        r = req.get("http://localhost:5000/api/health/api", timeout=3)
+        if r.status_code == 200:
+            data = r.json()
+            print(f"  ✓ API health: {data.get('status', 'unknown')}")
+            passed += 1
+        else:
+            print(f"  ⚠ API check: status {r.status_code}")
+            skipped += 1
+    except Exception:
+        print(f"  ⚠ API check: dashboard no corriendo (skip)")
+        skipped += 1
+
+    print(f"\n  {passed}/{total} checks passed, {failed} failed, {skipped} skipped")
+
+
 def menu():
     global log, _log_path
     log, _log_path = setup_logger()
@@ -1209,9 +1433,12 @@ def menu():
     log.info(f"{'='*55}")
 
     while True:
-        print(f"\n  Datos:")
+        print(f"\n  Setup:")
+        print(f"    [I] Inicializar base de datos (schema + índices + usuarios)")
+        print(f"    [D] Seedear datos demo (10K/100K/1M/8M)")
+        print(f"  Datos:")
         print(f"    [1] Ver estado de la base de datos")
-        print(f"    [2] Cargar dataset")
+        print(f"    [2] Cargar dataset (CSV via ingest_config.py)")
         print(f"    [3] Limpiar periodo específico")
         print(f"    [4] Limpiar TODAS las tablas de datos")
         print(f"  Pipeline:")
@@ -1219,6 +1446,8 @@ def menu():
         print(f"    [6] Refrescar vistas materializadas")
         print(f"    [7] Ver estado de matviews")
         print(f"    [8] Limpiar índices redundantes (Step 0)")
+        print(f"  Verificación:")
+        print(f"    [C] Check consistencia DB ↔ MVs ↔ API")
         print(f"  Servicios:")
         print(f"    [9] Verificar conexión Redis")
         print(f"    [S] Servir dashboard (Flask dev)")
@@ -1226,7 +1455,22 @@ def menu():
 
         opcion = input("\n  Seleccionar opción: ").strip()
 
-        if opcion == "1":
+        if opcion.upper() == "I":
+            _init_schema()
+            # Reconectar por si el schema cambió
+            conn.close()
+            conn = get_conn()
+
+        elif opcion.upper() == "D":
+            _seed_demo()
+            # Reconectar por si los datos cambiaron
+            conn.close()
+            conn = get_conn()
+
+        elif opcion.upper() == "C":
+            _check_consistency(conn)
+
+        elif opcion == "1":
             db_summary(conn)
 
         elif opcion == "2":

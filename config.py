@@ -15,7 +15,16 @@ import psycopg2
 import psycopg2.extras
 from psycopg2.pool import ThreadedConnectionPool
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost/rub")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL no está seteada. Exportala antes de iniciar:\n"
+        "  export DATABASE_URL=postgresql://user:pass@host/rub"
+    )
+
+# Agregar sslmode=prefer si no viene en el connection string
+if "sslmode" not in DATABASE_URL:
+    DATABASE_URL += ("&" if "?" in DATABASE_URL else "?") + "sslmode=prefer"
 
 # Connection pool: min 2, max 10 connections (per Gunicorn worker process)
 _pool = None

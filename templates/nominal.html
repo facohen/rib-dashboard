@@ -570,6 +570,12 @@
 
     const SEXO_MAP = { M: ['Masculino', 'tag-m'], F: ['Femenino', 'tag-f'], X: ['No binario', 'tag-x'], NI: ['No inf.', 'tag-ni'] }
 
+    function sanitize(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
     async function loadTable(page) {
         currentPage = page
         updateExportLink()
@@ -589,12 +595,12 @@
             const [slabel, sclass] = SEXO_MAP[b.sexo] || ['—', 'tag-ni']
             const cntClass = b.cantPrestaciones === 1 ? 'tag-1' : b.cantPrestaciones === 2 ? 'tag-2' : 'tag-3'
             return `<tr onclick="openDrawer(${b.id})">
-      <td><code style="font-size:12px;color:var(--muted)">${b.cuil}</code></td>
-      <td><strong>${b.apellido}</strong>, ${b.nombre}</td>
+      <td><code style="font-size:12px;color:var(--muted)">${sanitize(b.cuil)}</code></td>
+      <td><strong>${sanitize(b.apellido)}</strong>, ${sanitize(b.nombre)}</td>
       <td><span class="tag ${sclass}">${slabel}</span></td>
       <td>${b.edad ?? '—'}</td>
-      <td>${b.provincia}</td>
-      <td class="td-muted">${b.departamento}</td>
+      <td>${sanitize(b.provincia)}</td>
+      <td class="td-muted">${sanitize(b.departamento)}</td>
       <td><span class="tag ${cntClass}">${b.cantPrestaciones}</span></td>
     </tr>`
         }).join('')
@@ -625,27 +631,27 @@
         const montoTotal = b.pagos.reduce((s, p) => s + p.monto_prestacion, 0)
         document.getElementById('drawerBody').innerHTML = `
     <div class="info-grid">
-      <div class="info-item"><div class="lbl">CUIL</div><div class="val" style="font-family:monospace">${b.cuil}</div></div>
+      <div class="info-item"><div class="lbl">CUIL</div><div class="val" style="font-family:monospace">${sanitize(b.cuil)}</div></div>
       <div class="info-item"><div class="lbl">Sexo</div><div class="val">${sexoLabel(b.sexo)}</div></div>
       <div class="info-item"><div class="lbl">Edad</div><div class="val">${b.edad ?? '—'} años</div></div>
-      <div class="info-item"><div class="lbl">Nacimiento</div><div class="val">${b.fecha_nacimiento}</div></div>
-      <div class="info-item"><div class="lbl">Provincia</div><div class="val">${b.provincia}</div></div>
-      <div class="info-item"><div class="lbl">Departamento</div><div class="val">${b.departamento}</div></div>
-      <div class="info-item"><div class="lbl">CP</div><div class="val">${b.cp || '—'}</div></div>
+      <div class="info-item"><div class="lbl">Nacimiento</div><div class="val">${sanitize(b.fecha_nacimiento)}</div></div>
+      <div class="info-item"><div class="lbl">Provincia</div><div class="val">${sanitize(b.provincia)}</div></div>
+      <div class="info-item"><div class="lbl">Departamento</div><div class="val">${sanitize(b.departamento)}</div></div>
+      <div class="info-item"><div class="lbl">CP</div><div class="val">${sanitize(b.cp || '—')}</div></div>
       <div class="info-item"><div class="lbl">Monto período</div><div class="val" style="color:var(--green)">$${montoTotal.toLocaleString('es-AR', { minimumFractionDigits: 0 })}</div></div>
     </div>
     <div class="section-sep">Prestaciones activas en ${period}</div>
     ${b.prestaciones.map(p => `
       <div class="prestacion-item">
-        <div><div class="prg">${p.nombre_programa}</div><div class="sec">${p.secretaria_origen.replace('Secretaría de ', '')}</div></div>
-        <span class="${p.estado_beneficio === 'ACTIVO' ? 'estado-activo' : 'estado-inactivo'}">${p.estado_beneficio}</span>
+        <div><div class="prg">${sanitize(p.nombre_programa)}</div><div class="sec">${sanitize(p.secretaria_origen.replace('Secretaría de ', ''))}</div></div>
+        <span class="${p.estado_beneficio === 'ACTIVO' ? 'estado-activo' : 'estado-inactivo'}">${sanitize(p.estado_beneficio)}</span>
       </div>`).join('') || '<div style="color:var(--muted);font-size:13px">Sin prestaciones para este período</div>'}
     <div class="section-sep">Pagos realizados en ${period}</div>
     ${b.pagos.map(p => `
       <div class="pago-item">
         <div>
-          <div class="prg">${p.nombre_programa}</div>
-          <div style="font-size:11px;color:var(--muted)">${p.fecha_pago}</div>
+          <div class="prg">${sanitize(p.nombre_programa)}</div>
+          <div style="font-size:11px;color:var(--muted)">${sanitize(p.fecha_pago)}</div>
         </div>
         <div class="monto">$${p.monto_prestacion.toLocaleString('es-AR', { minimumFractionDigits: 0 })}</div>
       </div>`).join('') || '<div style="color:var(--muted);font-size:13px">Sin pagos para este período</div>'}

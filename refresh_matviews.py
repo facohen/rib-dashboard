@@ -1,5 +1,5 @@
 """
-refresh_matviews.py — Refresca todas las vistas materializadas.
+refresh_matviews.py — Refresca las vistas materializadas (mv_cross + mv_cobertura).
 
 Ejecutar después de cada carga mensual de datos:
     DATABASE_URL=postgresql://user:pass@host/rub python refresh_matviews.py
@@ -51,12 +51,7 @@ def run():
     # ANALYZE
     print("ANALYZE...", end=" ", flush=True)
     conn.autocommit = True
-    mvs = [
-        "mv_summary", "mv_pagos_summary", "mv_concentracion",
-        "mv_incompatibilidades", "mv_by_programa", "mv_by_secretaria",
-        "mv_by_provincia", "mv_by_sexo", "mv_by_grupo_etario",
-        "mv_evolucion", "mv_cross", "periods", "provincias_lookup"
-    ]
+    mvs = ["mv_cross", "mv_cobertura", "periods", "provincias_lookup"]
     for mv in mvs:
         cur.execute(f"ANALYZE {mv}")
     print("OK")

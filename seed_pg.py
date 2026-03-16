@@ -7,12 +7,18 @@ Uso:
     DATABASE_URL=postgresql://user:pass@host/rub python seed_pg.py --small   # 10K para test rápido
     DATABASE_URL=postgresql://user:pass@host/rub python seed_pg.py --1m      # 1M registros
 """
-import os, sys, hashlib, random, time
+import os, sys, random, time
 from datetime import date, timedelta
 import psycopg2
 from psycopg2.extras import execute_values
+from werkzeug.security import generate_password_hash
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost/rub")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL no está seteada. Exportala antes de iniciar:\n"
+        "  export DATABASE_URL=postgresql://user:pass@host/rub"
+    )
 BATCH_SIZE = 10_000
 
 # ──────────────────────────────────────────────
@@ -86,7 +92,7 @@ INCOMP_PAIRS = [(0,3),(1,7),(2,5),(6,7)]  # AUH↔PNC, PROGRESAR↔POTENCIAR, AL
 
 
 def hash_pw(pw):
-    return hashlib.sha256(pw.encode()).hexdigest()
+    return generate_password_hash(pw)
 
 
 def cuil(idx):
@@ -441,8 +447,39 @@ def run(num_beneficiaries=8_000_000):
     conn.close()
 
 
+def schema_only():
+    """Crea schema, índices y usuarios demo sin generar beneficiarios."""
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = False
+    cur = conn.cursor()
+
+    print("📋 Creando schema...")
+    cur.execute(SCHEMA)
+    conn.commit()
+
+    print("📊 Creando índices...")
+    for idx_sql in INDEXES.strip().split("\n"):
+        idx_sql = idx_sql.strip()
+        if idx_sql:
+            cur.execute(idx_sql)
+            conn.commit()
+
+    print("👤 Creando usuarios demo...")
+    cur.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(%s,%s,%s,%s)",
+                ("admin@demo.local", hash_pw("Demo123!"), "admin", "Administrador RUB"))
+    cur.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(%s,%s,%s,%s)",
+                ("user@demo.local", hash_pw("Demo123!"), "user", "Analista"))
+    conn.commit()
+
+    print("✅ Schema inicializado (sin datos de beneficiarios)")
+    cur.close()
+    conn.close()
+
+
 if __name__ == "__main__":
-    if "--small" in sys.argv:
+    if "--schema-only" in sys.argv:
+        schema_only()
+    elif "--small" in sys.argv:
         run(num_beneficiaries=10_000)
     elif "--medium" in sys.argv:
         run(num_beneficiaries=100_000)

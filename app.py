@@ -6,6 +6,9 @@ Producción: gunicorn -w 4 app:app --bind 0.0.0.0:5000
 import hashlib
 import json as json_mod
 import os
+import re
+import time
+from collections import defaultdict
 from decimal import Decimal
 from functools import wraps
 import requests as http_requests
@@ -13,6 +16,8 @@ from flask import (Flask, render_template, request, redirect, url_for,
                    session, jsonify, g, flash, Response)
 from flask.json.provider import DefaultJSONProvider
 from flask_caching import Cache
+from flask_wtf.csrf import CSRFProtect
+from werkzeug.security import generate_password_hash, check_password_hash
 from config import get_connection, put_connection
 import queries
 
@@ -27,30 +32,52 @@ class CustomJSONProvider(DefaultJSONProvider):
 app = Flask(__name__)
 app.json_provider_class = CustomJSONProvider
 app.json = CustomJSONProvider(app)
-app.secret_key = "rub-dashboard-secret-2026-change-in-prod"
+
+# ── Secret key: from env or ephemeral random ──
+_secret = os.environ.get("FLASK_SECRET_KEY")
+if not _secret:
+    _secret = os.urandom(32).hex()
+    print("[WARN] FLASK_SECRET_KEY no seteada — usando key efímera (sessions no sobreviven restarts)")
+app.secret_key = _secret
+
+# ── Session cookie hardening ──
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["PERMANENT_SESSION_LIFETIME"] = 3600  # 1 hora
+# SESSION_COOKIE_SECURE = True  # TODO: activar cuando haya TLS
+
+# ── CSRF protection ──
+csrf = CSRFProtect(app)
 
 # ──────────────────────────────────────────────
-# Cache: Redis if available, SimpleCache as fallback
-# Data is monthly (immutable within period) → aggressive TTL
+# Cache: SimpleCache (con MVs respondiendo <10ms, es un safety net)
 # ──────────────────────────────────────────────
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-try:
-    import redis
-    redis.from_url(REDIS_URL).ping()
-    cache_config = {
-        "CACHE_TYPE": "RedisCache",
-        "CACHE_REDIS_URL": REDIS_URL,
-        "CACHE_DEFAULT_TIMEOUT": 3600,
-    }
-    print("[CACHE] Redis conectado")
-except Exception:
-    cache_config = {
-        "CACHE_TYPE": "SimpleCache",
-        "CACHE_DEFAULT_TIMEOUT": 3600,
-    }
-    print("[CACHE] Redis no disponible, usando SimpleCache (no compartido entre workers)")
-
+cache_config = {
+    "CACHE_TYPE": "SimpleCache",
+    "CACHE_DEFAULT_TIMEOUT": 3600,
+}
 cache = Cache(app, config=cache_config)
+
+
+# ──────────────────────────────────────────────
+# Security headers
+# ──────────────────────────────────────────────
+
+@app.after_request
+def set_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; "
+        "font-src https://fonts.gstatic.com; "
+        "img-src 'self' data: https://*.tile.openstreetmap.org; "
+        "connect-src 'self'"
+    )
+    return response
+
 
 # ──────────────────────────────────────────────
 # Ollama / Chatbot config
@@ -104,7 +131,11 @@ def close_db(e=None):
 # ──────────────────────────────────────────────
 
 def hash_password(pw):
-    return hashlib.sha256(pw.encode()).hexdigest()
+    return generate_password_hash(pw)
+
+def _is_legacy_sha256(h):
+    """Detecta hash SHA256 legacy (64 hex chars sin separador pbkdf2)."""
+    return len(h) == 64 and all(c in "0123456789abcdef" for c in h)
 
 def login_required(f):
     @wraps(f)
@@ -141,16 +172,54 @@ def index():
         return redirect(url_for("dashboard"))
     return redirect(url_for("login"))
 
+# ── Rate limiting (in-memory) ──
+_login_attempts = defaultdict(list)
+
+def _check_rate_limit(ip, max_attempts=5, window=300):
+    now = time.time()
+    _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < window]
+    if len(_login_attempts[ip]) >= max_attempts:
+        return False
+    _login_attempts[ip].append(now)
+    return True
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if "user_id" in session:
         return redirect(url_for("dashboard"))
     error = None
     if request.method == "POST":
+        if not _check_rate_limit(request.remote_addr):
+            error = "Demasiados intentos. Esperá 5 minutos."
+            return render_template("login.html", error=error)
+
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
-        user = queries.get_user_by_email(get_db(), email)
-        if user and user["password_hash"] == hash_password(password):
+        conn = get_db()
+        user = queries.get_user_by_email(conn, email)
+
+        # Verificar password (soporta legacy SHA256 y werkzeug pbkdf2)
+        password_ok = False
+        if user:
+            stored = user["password_hash"]
+            if _is_legacy_sha256(stored):
+                # Legacy: SHA256 sin salt
+                password_ok = (stored == hashlib.sha256(password.encode()).hexdigest())
+                if password_ok:
+                    # Migración transparente a werkzeug hash
+                    new_hash = generate_password_hash(password)
+                    try:
+                        cur = conn.cursor()
+                        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s",
+                                    (new_hash, user["id"]))
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+            else:
+                password_ok = check_password_hash(stored, password)
+
+        if password_ok:
+            session.clear()  # Fix session fixation
             session.permanent = True
             session["user_id"] = user["id"]
             session["email"] = user["email"]
@@ -326,9 +395,21 @@ def _call_ollama_sql(messages, t0):
         return None, f"Error con Ollama: {e}"
 
 
+_SQL_ALLOWED_TABLES = {"beneficiaries", "benefits", "payments", "programs",
+                       "incompatibility_rules", "secretarias"}
+
 def _execute_sql_readonly(sql_clean):
-    """Ejecuta SQL en modo read-only. Retorna (result_dict, error_str)."""
-    import time
+    """Ejecuta SQL en modo read-only con allowlist de tablas. Retorna (result_dict, error_str)."""
+    # Validar tablas referenciadas contra allowlist
+    referenced = set(re.findall(r'(?:FROM|JOIN)\s+(\w+)', sql_clean, re.IGNORECASE))
+    forbidden = referenced - _SQL_ALLOWED_TABLES
+    if forbidden:
+        return None, f"Tablas no permitidas: {', '.join(forbidden)}"
+
+    # Agregar LIMIT si no tiene
+    if not re.search(r'\bLIMIT\b', sql_clean, re.IGNORECASE):
+        sql_clean = sql_clean.rstrip(";").strip() + " LIMIT 100"
+
     print(f"[CHATBOT] Ejecutando SQL: {sql_clean[:200]}")
     t_sql = time.time()
     try:
@@ -354,10 +435,25 @@ def _execute_sql_readonly(sql_clean):
         return None, err
 
 
+def _mask_cuil(val):
+    """Maskea CUIL para proteger PII: 20-12345678-9 → *******8-9"""
+    s = str(val)
+    if len(s) >= 4:
+        return "*" * (len(s) - 4) + s[-4:]
+    return s
+
 def _format_sql_result(user_msg, sql_result):
     """Formatea el resultado SQL como markdown (sin LLM)."""
     columns = sql_result["columns"]
     rows = sql_result["rows"]
+
+    # Maskear columnas CUIL para proteger PII
+    cuil_cols = {c for c in columns if c.lower() in ("cuil", "cuil_raw")}
+    if cuil_cols:
+        for row in rows:
+            for col in cuil_cols:
+                if row.get(col):
+                    row[col] = _mask_cuil(row[col])
 
     # Caso simple: 1 fila, 1 columna (ej: COUNT)
     if len(rows) == 1 and len(columns) == 1:
@@ -428,8 +524,8 @@ def _get_chart_filters():
     return f or None
 
 def _cache_key():
-    """Cache key from full query string — unique per endpoint+params."""
-    return request.full_path
+    """Cache key: hashed to avoid path traversal and namespace collisions."""
+    return "rub:" + hashlib.sha256(request.full_path.encode()).hexdigest()[:16]
 
 @app.route("/api/indicators/summary")
 @login_required
@@ -528,6 +624,52 @@ def api_nominal_detail(bid):
     return jsonify(detail)
 
 # ──────────────────────────────────────────────
+# Health endpoints (no auth — para monitoring)
+# ──────────────────────────────────────────────
+
+@app.route("/api/health/api")
+@csrf.exempt
+def health_api():
+    """Check: DB connection, tables, MVs, cache type."""
+    checks = {}
+    try:
+        conn = get_db()
+        conn.cursor().execute("SELECT 1")
+        checks["db"] = "ok"
+    except Exception:
+        checks["db"] = "error"
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM pg_matviews WHERE schemaname='public'")
+        mv_count = cur.fetchone()[0]
+        checks["matviews"] = f"{mv_count}/11"
+    except Exception:
+        checks["matviews"] = "error"
+    checks["cache"] = cache_config.get("CACHE_TYPE", "unknown")
+    checks["status"] = "ok" if checks["db"] == "ok" else "degraded"
+    return jsonify(checks)
+
+
+@app.route("/api/health/ml")
+@csrf.exempt
+def health_ml():
+    """Check: Ollama reachable, model loaded."""
+    checks = {}
+    try:
+        r = http_requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        models = [m["name"] for m in r.json().get("models", [])]
+        checks["ollama"] = "ok"
+        checks["models"] = models
+        checks["target_model"] = CHATBOT_MODEL
+        checks["model_loaded"] = any(CHATBOT_MODEL in m for m in models)
+    except Exception:
+        checks["ollama"] = "unreachable"
+        checks["model_loaded"] = False
+    checks["status"] = "ok" if checks.get("model_loaded") else "degraded"
+    return jsonify(checks)
+
+
+# ──────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────
 
@@ -536,4 +678,4 @@ if __name__ == "__main__":
     print("   Requiere DATABASE_URL con PostgreSQL")
     print("   admin@demo.local / Demo123!")
     print("   user@demo.local  / Demo123!\n")
-    app.run(debug=True, port=5000)
+    app.run(debug=os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true"), port=5000)
