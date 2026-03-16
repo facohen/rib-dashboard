@@ -26,8 +26,6 @@
         <button class="metric-btn active" data-metric="personas" onclick="setMetric('personas')">Personas</button>
         <button class="metric-btn" data-metric="beneficios" onclick="setMetric('beneficios')">Beneficios</button>
         <button class="metric-btn" data-metric="montos" onclick="setMetric('montos')">Montos</button>
-        <button class="metric-btn" data-metric="monto_persona" onclick="setMetric('monto_persona')">$/Persona</button>
-        <button class="metric-btn" data-metric="monto_beneficio" onclick="setMetric('monto_beneficio')">$/Beneficio</button>
     </div>
     <!-- Theme Toggle -->
     <button class="theme-btn btn-ghost" onclick="toggleTheme()" title="Cambiar Tema"
@@ -197,7 +195,7 @@
     }
 
     function isMoneyMetric() {
-        return ['montos', 'monto_persona', 'monto_beneficio'].includes(globalMetric)
+        return globalMetric === 'montos'
     }
 
     function fmtBig(n) {
