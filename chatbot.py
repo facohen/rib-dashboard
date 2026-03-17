@@ -19,31 +19,61 @@ chatbot_bp = Blueprint("chatbot", __name__)
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 CHATBOT_MODEL = os.environ.get("CHATBOT_MODEL", "qwen2.5-coder:7b")
 
-SQL_GEN_PROMPT = """Generador SQL para PostgreSQL. Responde UNICAMENTE con una query SELECT. Sin explicacion, sin backticks, sin markdown. LIMIT 100 siempre. Si no podes generar SQL, responde exactamente: NO_SQL
+SQL_GEN_PROMPT = """Genera SELECT PostgreSQL. Solo SQL, sin explicacion, sin backticks. LIMIT 100. Si no aplica: NO_SQL
+Nunca devolver cuil, nombre o apellido. Si piden datos de una persona especifica: NO_SQL
 
-TABLAS:
-beneficiaries(id,cuil,nombre,apellido,sexo,fecha_nacimiento,provincia,departamento)
-secretarias(id,nombre)
-programs(id,secretaria_id REFERENCES secretarias(id),nombre_programa)
-benefits(id,beneficiary_id,program_id,periodo_mes,estado_beneficio)
-payments(id,beneficiary_id,program_id,periodo_mes,monto_prestacion)
-incompatibility_rules(id,program_a_id,program_b_id,is_compatible,descripcion)
+BASE: RUB (Registro Unico de Beneficiarios) — programas sociales argentinos.
+-- Persona: ser humano, 1 fila en beneficiaries. Tiene sexo ('F','M','X'), fecha_nacimiento DATE, provincia, departamento.
+-- Beneficiario: una persona dentro de un programa. Maria en 3 programas = 1 persona, 3 beneficiarios.
+-- Beneficio/prestacion: cada fila de benefits (persona+programa+mes). Contar beneficios = COUNT(*).
+-- Contar personas unicas = COUNT(DISTINCT beneficiary_id). NO es lo mismo que contar beneficios.
+-- Monto: plata que cobra. SUM(monto_prestacion) o SUM(montos). No confundir con cantidad de personas.
 
-REGLAS: estado_beneficio='ACTIVO', periodo_mes='2026-03', contar=COUNT(DISTINCT b.beneficiary_id)
+TABLAS MATERIALIZADAS (preferir siempre, son rapidas):
+mv_resumen(periodo_mes, provincia, sexo, grupo_etario, cant_prestaciones, personas BIGINT, beneficios BIGINT, montos NUMERIC)
+-- Personas unicas. SUM(personas) = total personas, SUM(beneficios) = total beneficios, SUM(montos) = total plata.
+-- grupo_etario: '0-4 años','5-12 años','13-17 años','18-29 años','30-59 años','60+ años'
+-- cant_prestaciones: '1','2','3+' (cuantos programas tiene la persona)
+-- NO tiene programa ni secretaria. Usar para totales generales.
+
+mv_cross(periodo_mes, nombre_programa, secretaria_origen, provincia, sexo, grupo_etario, cant_prestaciones, personas, beneficios, montos)
+-- Mismas metricas pero desglosada por programa y secretaria. Usar cuando pregunten por programa.
+
+TABLAS RAW (usar solo si las MVs no alcanzan, ej: edad exacta, departamento):
+beneficiaries(id, cuil, nombre, apellido, sexo CHAR(1), fecha_nacimiento DATE, provincia, departamento)
+-- edad exacta: EXTRACT(YEAR FROM AGE(fecha_nacimiento))
+programs(id, secretaria_id, nombre_programa)
+secretarias(id, nombre)
+benefits(id, beneficiary_id, program_id, periodo_mes TEXT, estado_beneficio TEXT)
+payments(id, beneficiary_id, program_id, periodo_mes, monto_prestacion NUMERIC)
+incompatibility_rules(id, program_a_id, program_b_id, is_compatible BOOLEAN, descripcion)
+
+DEFAULTS salvo que pidan otra cosa: periodo_mes='2026-03'. En tablas raw: estado_beneficio='ACTIVO'.
 
 EJ:
-total: SELECT COUNT(DISTINCT beneficiary_id) FROM benefits WHERE estado_beneficio='ACTIVO' AND periodo_mes='2026-03'
-x_prog: SELECT p.nombre_programa,COUNT(DISTINCT b.beneficiary_id) n FROM benefits b JOIN programs p ON p.id=b.program_id WHERE b.estado_beneficio='ACTIVO' AND b.periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC LIMIT 100
-x_prov: SELECT ben.provincia,COUNT(DISTINCT b.beneficiary_id) n FROM benefits b JOIN beneficiaries ben ON ben.id=b.beneficiary_id WHERE b.estado_beneficio='ACTIVO' AND b.periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC LIMIT 100
-montos: SELECT p.nombre_programa,SUM(pay.monto_prestacion) FROM payments pay JOIN programs p ON p.id=pay.program_id WHERE pay.periodo_mes='2026-03' GROUP BY 1 ORDER BY 2 DESC LIMIT 100
-multi: SELECT COUNT(*) FROM (SELECT beneficiary_id FROM benefits WHERE estado_beneficio='ACTIVO' AND periodo_mes='2026-03' GROUP BY 1 HAVING COUNT(DISTINCT program_id)>1) s
-crosstab: SELECT ben.provincia,SUM(CASE WHEN ben.sexo='F' THEN 1 ELSE 0 END) femenino,SUM(CASE WHEN ben.sexo='M' THEN 1 ELSE 0 END) masculino,SUM(CASE WHEN ben.sexo='X' THEN 1 ELSE 0 END) no_binario,COUNT(DISTINCT b.beneficiary_id) total FROM benefits b JOIN beneficiaries ben ON ben.id=b.beneficiary_id WHERE b.estado_beneficio='ACTIVO' AND b.periodo_mes='2026-03' GROUP BY 1 ORDER BY total DESC LIMIT 10
-
-IMPORTANTE: Cuando pidan desglose por sexo, programa u otra dimension dentro de un ranking (ej "top provincias por sexo"), usa SUM(CASE WHEN ... THEN 1 ELSE 0 END) para pivotar columnas. NO uses GROUP BY con dos dimensiones + LIMIT porque trunca combinaciones.
+total_personas: SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes='2026-03'
+total_montos: SELECT SUM(montos) FROM mv_resumen WHERE periodo_mes='2026-03'
+x_prog: SELECT nombre_programa,SUM(personas) n FROM mv_cross WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC LIMIT 100
+x_prov: SELECT provincia,SUM(personas) n FROM mv_resumen WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC LIMIT 100
+x_sexo: SELECT sexo,SUM(personas) n FROM mv_resumen WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC
+x_edad: SELECT grupo_etario,SUM(personas) n FROM mv_resumen WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC
+montos_prog: SELECT nombre_programa,SUM(montos) total FROM mv_cross WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY total DESC LIMIT 100
+prov_sexo: SELECT provincia,SUM(CASE WHEN sexo='F' THEN personas ELSE 0 END) femenino,SUM(CASE WHEN sexo='M' THEN personas ELSE 0 END) masculino,SUM(CASE WHEN sexo='X' THEN personas ELSE 0 END) no_binario,SUM(personas) total FROM mv_resumen WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY total DESC LIMIT 100
+mayores60: SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes='2026-03' AND grupo_etario='60+ años'
+menores5: SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes='2026-03' AND grupo_etario='0-4 años'
+edad>100: SELECT COUNT(DISTINCT b.beneficiary_id) FROM benefits b JOIN beneficiaries ben ON ben.id=b.beneficiary_id WHERE b.estado_beneficio='ACTIVO' AND b.periodo_mes='2026-03' AND EXTRACT(YEAR FROM AGE(ben.fecha_nacimiento))>100
+edad<2: SELECT COUNT(DISTINCT b.beneficiary_id) FROM benefits b JOIN beneficiaries ben ON ben.id=b.beneficiary_id WHERE b.estado_beneficio='ACTIVO' AND b.periodo_mes='2026-03' AND EXTRACT(YEAR FROM AGE(ben.fecha_nacimiento))<2
+multi: SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes='2026-03' AND cant_prestaciones IN ('2','3+')
+concentracion: SELECT cant_prestaciones,SUM(personas) n FROM mv_resumen WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY 1
 """
 
 _SQL_ALLOWED_TABLES = {"beneficiaries", "benefits", "payments", "programs",
-                       "incompatibility_rules", "secretarias"}
+                       "incompatibility_rules", "secretarias",
+                       "mv_cross", "mv_resumen"}
+
+_NOMINAL_COLUMNS = re.compile(
+    r'\b(cuil|nombre|apellido)\b', re.IGNORECASE
+)
 
 
 # ─── Rutas ───────────────────────────────────────────────
@@ -92,6 +122,9 @@ def api_ask():
 
     # Fase 2: Ejecutar (con 1 retry)
     result, err = _execute_readonly(sql)
+    if err == "NOMINAL":
+        return _response("No puedo responder con datos nominales (nombres, apellidos, CUIL). "
+                         "Puedo ayudarte con totales, promedios y distribuciones.", sql, "", 0)
     if err:
         retry_msgs = messages + [
             {"role": "assistant", "content": sql},
@@ -100,6 +133,9 @@ def api_ask():
         sql2, _ = _call_ollama(retry_msgs)
         if sql2:
             result2, err2 = _execute_readonly(sql2)
+            if err2 == "NOMINAL":
+                return _response("No puedo responder con datos nominales (nombres, apellidos, CUIL). "
+                                 "Puedo ayudarte con totales, promedios y distribuciones.", sql2, "", 0)
             if not err2:
                 sql, result, err = sql2, result2, err2
 
@@ -144,7 +180,22 @@ def _call_ollama(messages):
 
 
 def _execute_readonly(sql):
-    """Ejecuta SQL read-only con allowlist de tablas."""
+    """Ejecuta SQL read-only. Solo SELECT permitido."""
+    # Hard block: solo un SELECT, sin multi-statement
+    stripped = sql.strip().rstrip(";").strip()
+    if ";" in stripped:
+        return None, "Solo se permite una consulta."
+    if not stripped.upper().startswith("SELECT"):
+        return None, "Solo se permiten consultas SELECT."
+    if re.search(r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|COPY|EXECUTE|SET|COMMIT|ROLLBACK|BEGIN)\b',
+                 stripped, re.IGNORECASE):
+        return None, "Solo se permiten consultas SELECT."
+
+    # Bloquear SELECT que devuelva datos nominales (PII)
+    select_part = re.split(r'\bFROM\b', sql, maxsplit=1, flags=re.IGNORECASE)[0]
+    if _NOMINAL_COLUMNS.search(select_part):
+        return None, "NOMINAL"
+
     referenced = set(re.findall(r'(?:FROM|JOIN)\s+(\w+)', sql, re.IGNORECASE))
     forbidden = referenced - _SQL_ALLOWED_TABLES
     if forbidden:
@@ -204,16 +255,21 @@ def _format_result(result):
 
 
 def _fmt(val):
+    """Formato AR estilo Power BI: <1M completo, >=1M escala M/MM."""
     if val is None:
         return "-"
-    if isinstance(val, (int, float, Decimal)):
-        if isinstance(val, float) and val == int(val):
-            val = int(val)
-        if isinstance(val, int) and abs(val) >= 1000:
-            return f"{val:,.0f}".replace(",", ".")
-        if isinstance(val, (float, Decimal)) and abs(val) >= 1000:
-            return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    return str(val)
+    if not isinstance(val, (int, float, Decimal)):
+        return str(val)
+    n = float(val)
+    abs_n = abs(n)
+    if abs_n >= 1e9:
+        return f"{n/1e9:,.2f}MM".replace(",", "X").replace(".", ",").replace("X", ".")
+    if abs_n >= 1e6:
+        return f"{n/1e6:,.2f}M".replace(",", "X").replace(".", ",").replace("X", ".")
+    # < 1M: número completo con separador de miles
+    if isinstance(val, (float, Decimal)) and n != int(n):
+        return f"{n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{int(n):,}".replace(",", ".")
 
 
 def _response(answer, sql_query, sql_error, row_count):

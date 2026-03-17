@@ -380,15 +380,17 @@
 
 {% block content %}
 <div class="topbar">
-    <div class="topbar-title">
-        Chatbot con IA
+    <div class="topbar-row">
+        <div class="topbar-title">Ruby — Asistente IA</div>
+        <div class="topbar-controls">
+            <div class="status-badge" id="statusBadge">
+                <span class="status-dot offline" id="statusDot"></span>
+                <span id="statusText">Verificando...</span>
+            </div>
+            <span class="model-badge" id="modelBadge">---</span>
+            <span class="role-badge {{ role }}">{{ role }}</span>
+        </div>
     </div>
-    <div class="status-badge" id="statusBadge">
-        <span class="status-dot offline" id="statusDot"></span>
-        <span id="statusText">Verificando...</span>
-    </div>
-    <span class="model-badge" id="modelBadge">---</span>
-    <span class="role-badge {{ role }}">{{ role }}</span>
 </div>
 
 <div class="chat-container">

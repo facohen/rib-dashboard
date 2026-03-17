@@ -74,9 +74,9 @@ TEMP_TABLE_SQL = """
 CREATE TEMP TABLE _pp ON COMMIT DROP AS
 WITH base AS (
     SELECT COALESCE(b.beneficiary_id, -b.id) AS beneficiary_id, b.periodo_mes,
-           p.nombre_programa, p.secretaria_origen,
+           p.nombre_programa, s.nombre AS secretaria_origen,
            COALESCE(ben.provincia, 'Sin dato') AS provincia,
-           COALESCE(ben.sexo, 'Sin dato') AS sexo,
+           COALESCE(ben.sexo, 'NI') AS sexo,
            CASE
              WHEN ben.fecha_nacimiento IS NULL THEN 'Sin dato'
              WHEN calc.edad <= 4  THEN '0-4 años'
@@ -90,6 +90,7 @@ WITH base AS (
            COALESCE(pa.total_monto, 0) AS monto
     FROM benefits b
     JOIN programs p ON b.program_id = p.id
+    JOIN secretarias s ON p.secretaria_id = s.id
     LEFT JOIN beneficiaries ben ON b.beneficiary_id = ben.id
     LEFT JOIN (
         SELECT beneficiary_id, COUNT(DISTINCT program_id) AS cant_prog

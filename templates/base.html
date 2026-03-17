@@ -5,7 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
-    <title>Dashboard SIIS</title>
+    <title>Dashboard Beneficiarios MCH</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
@@ -113,9 +113,10 @@
 
         .sidebar-title small {
             display: block;
-            font-size: 10px;
-            color: var(--muted);
-            font-weight: 400;
+            font-size: 12px;
+            color: var(--text);
+            font-weight: 500;
+            opacity: 0.7;
         }
 
         .sidebar-nav {
@@ -230,22 +231,24 @@
         }
 
         .topbar {
-            height: var(--topbar-h);
             background: var(--surface);
             border-bottom: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            padding: 0 24px;
-            gap: 16px;
             position: sticky;
             top: 0;
             z-index: 40;
         }
 
+        .topbar-row {
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+            height: var(--topbar-h);
+            gap: 12px;
+        }
+
         .topbar-title {
             font-size: 16px;
             font-weight: 700;
-            flex: 1;
         }
 
         .topbar-title small {
@@ -253,6 +256,13 @@
             color: var(--muted);
             font-weight: 400;
             margin-left: 4px;
+        }
+
+        .topbar-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-left: auto;
         }
 
         .period-selector {
@@ -292,7 +302,6 @@
             border: 1px solid var(--border);
             border-radius: 8px;
             overflow: hidden;
-            margin-left: 8px;
         }
         .metric-btn {
             padding: 6px 14px;
@@ -307,7 +316,7 @@
         }
         .metric-btn:hover { background: var(--surface2); }
         .metric-btn.active {
-            background: var(--accent);
+            background: var(--primary);
             color: #fff;
         }
 
@@ -330,6 +339,22 @@
             background: rgba(74, 103, 255, 0.12);
             color: #93a8ff;
             border: 1px solid rgba(74, 103, 255, 0.25);
+        }
+
+        .topbar-filters {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .topbar-filters .filter-label {
+            font-size: 11px;
+            color: var(--muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-right: 2px;
         }
 
         .content {
@@ -358,13 +383,22 @@
 
         /* FILTER BADGES */
         .filter-badge {
-            display: inline-flex; align-items: center; gap: 4px;
-            padding: 4px 12px; border-radius: 16px; font-size: 12px;
-            background: var(--primary); color: #fff;
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 4px 10px; border-radius: 6px; font-size: 12px;
+            background: rgba(74, 103, 255, 0.12); color: var(--primary);
+            border: 1px solid rgba(74, 103, 255, 0.2);
+            font-weight: 500;
         }
+        .filter-badge .filter-x {
+            cursor: pointer; opacity: 0.6; transition: opacity .15s;
+            font-size: 14px; line-height: 1;
+        }
+        .filter-badge .filter-x:hover { opacity: 1; }
         .filter-badge.filter-clear {
-            background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+            background: var(--surface2); color: var(--muted); border: 1px solid var(--border);
+            cursor: pointer; transition: color .15s;
         }
+        .filter-badge.filter-clear:hover { color: var(--text); }
 
         /* KPI CARDS */
         .kpi-grid {
@@ -530,6 +564,155 @@
             color: var(--text);
         }
 
+        /* MAP TOOLTIP */
+        .map-tooltip {
+            position: absolute;
+            z-index: 1000;
+            pointer-events: none;
+            width: 340px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.03);
+            overflow: hidden;
+            backdrop-filter: blur(16px);
+        }
+        body.light-theme .map-tooltip {
+            box-shadow: 0 12px 40px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.04);
+        }
+
+        .mtt-accent {
+            height: 3px;
+            background: linear-gradient(90deg, #4a67ff, #7c3aed, #a78bfa);
+        }
+
+        .mtt-header {
+            padding: 16px 20px 4px;
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--text);
+            letter-spacing: -0.5px;
+        }
+        .mtt-header-sub {
+            padding: 0 20px 14px;
+            font-size: 11px;
+            color: var(--muted);
+            font-weight: 500;
+        }
+
+        .mtt-kpis {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            padding: 0 20px 14px;
+        }
+        .mtt-kpi {
+            padding: 8px 12px;
+            background: var(--surface2);
+            border-radius: 10px;
+        }
+        .mtt-kpi-icon { font-size: 14px; margin-bottom: 4px; }
+        .mtt-kpi-label {
+            font-size: 9px;
+            color: var(--muted);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }
+        .mtt-kpi-value {
+            font-size: 20px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: var(--text);
+            margin-top: 2px;
+            line-height: 1.1;
+        }
+
+        .mtt-section-title {
+            font-size: 9px;
+            color: var(--muted);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 2px 20px 8px;
+        }
+
+        .mtt-progs { padding: 0 20px 16px; }
+
+        .mtt-prog-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 5px 0;
+        }
+        .mtt-prog-rank {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            font-weight: 800;
+            color: #fff;
+            flex-shrink: 0;
+        }
+        .mtt-prog-info { flex: 1; min-width: 0; }
+        .mtt-prog-name {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .mtt-prog-bar-wrap {
+            height: 4px;
+            background: var(--surface2);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+        .mtt-prog-bar {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+        .mtt-prog-stats {
+            text-align: right;
+            flex-shrink: 0;
+            min-width: 60px;
+        }
+        .mtt-prog-val {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text);
+            line-height: 1.2;
+        }
+        .mtt-prog-benef {
+            font-size: 10px;
+            color: var(--muted);
+            font-weight: 500;
+        }
+        .mtt-pct {
+            font-size: 10px;
+            color: var(--muted);
+            font-weight: 500;
+        }
+
+        /* Loading */
+        .mtt-loading { padding: 16px 20px 20px; }
+        .mtt-skeleton {
+            height: 12px;
+            background: var(--surface2);
+            border-radius: 6px;
+            margin-bottom: 12px;
+            animation: mtt-pulse 1.5s ease infinite;
+        }
+        .mtt-skeleton.short { width: 55%; }
+        .mtt-skeleton.bar { height: 8px; margin-bottom: 16px; }
+        @keyframes mtt-pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 0.7; } }
+
         /* CUSTOM scrollbar */
         ::-webkit-scrollbar {
             width: 6px;
@@ -553,7 +736,7 @@
     <aside class="sidebar">
         <div class="sidebar-brand">
             <div class="sidebar-logo">S</div>
-            <div class="sidebar-title">Dashboard<small>SIIS</small></div>
+            <div class="sidebar-title">Dashboard<small>Beneficiarios MCH</small></div>
         </div>
         <nav class="sidebar-nav">
             <div class="nav-section">Principal</div>
@@ -580,21 +763,7 @@
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
                 </svg>
-                Chatbot con IA
-            </a>
-            <div class="nav-section">Indicadores</div>
-            <a class="nav-item" href="/dashboard#sec-cobertura">
-                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <polyline points="22,12 18,12 15,21 9,3 6,12 2,12" />
-                </svg>
-                Cobertura & Montos
-            </a>
-            <a class="nav-item" href="/dashboard#sec-distribucion">
-                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path d="M3 3v18h18" />
-                    <polyline points="18,17 13,12 9,16 5,10" />
-                </svg>
-                Distribución
+                IA Ruby
             </a>
         </nav>
         <div class="sidebar-footer">
@@ -620,6 +789,41 @@
         {% block content %}{% endblock %}
     </div>
 
+    <script>
+    /**
+     * Formato numérico Power BI/SQLBI con localización AR.
+     * fmtAR(999)            → "999"
+     * fmtAR(1234)           → "1.234"
+     * fmtAR(123456)         → "123.456"
+     * fmtAR(1234567)        → "1,23M"
+     * fmtAR(1234567890)     → "1,23MM"
+     * fmtAR(1234567, '$')   → "$1,23M"
+     */
+    function fmtAR(n, prefix) {
+        prefix = prefix || '';
+        if (n == null || isNaN(n)) return '-';
+        n = Number(n);
+        var abs = Math.abs(n);
+        var val, suffix, decimals;
+        if (abs >= 1e9)      { val = n / 1e9;  suffix = 'MM'; decimals = 2; }
+        else if (abs >= 1e6) { val = n / 1e6;  suffix = 'M';  decimals = 2; }
+        else                 { val = n;         suffix = '';    decimals = 0; }
+        var formatted = val.toLocaleString('es-AR', {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals
+        });
+        return prefix + formatted + suffix;
+    }
+
+    /** Formato largo sin escala: 1234567 → "1.234.567" o "1.234.567,89" */
+    function fmtFullAR(n, decimals) {
+        if (n == null || isNaN(n)) return '-';
+        return Number(n).toLocaleString('es-AR', {
+            minimumFractionDigits: decimals || 0,
+            maximumFractionDigits: decimals || 0
+        });
+    }
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 

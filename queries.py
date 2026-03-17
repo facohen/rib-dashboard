@@ -195,12 +195,14 @@ def get_summary(conn, period, filters=None):
     total_prest = int(row["total_prest"] or 0) if row else 0
     monto_total = float(row["total_monto"] or 0) if row else 0
 
-    # cant_programas always from mv_cross
+    # prestaciones activas + cant_programas always from mv_cross
     prog_row = query_one(conn, f"""
-        SELECT COUNT(DISTINCT nombre_programa) AS cant_programas
+        SELECT COUNT(DISTINCT nombre_programa) AS cant_programas,
+               SUM(personas) AS prestaciones_activas
         FROM mv_cross WHERE {where_sql}
     """, params)
     cant_programas = int(prog_row["cant_programas"] or 0) if prog_row else 0
+    prestaciones_activas = int(prog_row["prestaciones_activas"] or 0) if prog_row else 0
 
     if total_benef == 0:
         return _empty_summary(period)
@@ -228,6 +230,7 @@ def get_summary(conn, period, filters=None):
     return {
         "period": period,
         "cobertura": total_benef,
+        "prestacionesActivas": prestaciones_activas,
         "promedioPrestaciones": prom_prest,
         "promedioMontoPorBenef": prom_monto,
         "montoTotal": round(monto_total),
@@ -242,6 +245,7 @@ def _empty_summary(period):
     return {
         "period": period,
         "cobertura": 0,
+        "prestacionesActivas": 0,
         "promedioPrestaciones": 0,
         "promedioMontoPorBenef": 0,
         "montoTotal": 0,
@@ -375,6 +379,8 @@ def _nominal_from_mv(conn, period, filters, page, page_size, offset):
     sexo = filters.get("sexo", "")
     programa_id = filters.get("programa", "")
     estado = filters.get("estado", "ACTIVO")
+    grupo_etario = filters.get("grupo_etario", "")
+    cant_prestaciones = filters.get("cant_prestaciones", "")
 
     where = ["n.periodo_mes=%s"]
     params = [period]
@@ -384,6 +390,19 @@ def _nominal_from_mv(conn, period, filters, page, page_size, offset):
         where.append("n.sexo=%s"); params.append(sexo)
     if cuil:
         where.append("n.cuil LIKE %s"); params.append(f"{cuil}%")
+    if grupo_etario:
+        if grupo_etario == "60+":
+            where.append("n.edad >= 60")
+        else:
+            parts = grupo_etario.split("-")
+            where.append("n.edad >= %s AND n.edad <= %s")
+            params.extend([int(parts[0]), int(parts[1])])
+    if cant_prestaciones:
+        if cant_prestaciones == "3+":
+            where.append("n.cant_prestaciones >= 3")
+        else:
+            where.append("n.cant_prestaciones = %s")
+            params.append(int(cant_prestaciones))
 
     # Programa y estado: filtro directo contra arrays en la MV
     if programa_id and estado == "ACTIVO":
@@ -429,6 +448,8 @@ def _nominal_from_raw(conn, period, filters, page, page_size, offset):
     programa_id = filters.get("programa", "")
     sexo = filters.get("sexo", "")
     estado = filters.get("estado", "ACTIVO")
+    grupo_etario = filters.get("grupo_etario", "")
+    cant_prestaciones = filters.get("cant_prestaciones", "")
 
     where = ["b.periodo_mes=%s"]
     params = [period]
@@ -550,4 +571,77 @@ def get_nominal_detail(conn, bid, period):
         "cp": ben["cp"],
         "prestaciones": [dict(r) for r in prestaciones],
         "pagos": [dict(r) for r in pagos],
+    }
+
+
+# ──────────────────────────────────────────────
+# Provincia detail (rich map tooltip)
+# ──────────────────────────────────────────────
+
+def get_provincia_detail(conn, period, provincia, filters=None):
+    where_base = ["periodo_mes = %s", "provincia = %s"]
+    params_base = [period, provincia]
+    fw, fp = _cross_where(filters)
+
+    # Totales deduplicados desde mv_resumen (personas únicas)
+    has_prog_filter = filters and (filters.get("programa") or filters.get("secretaria"))
+    resumen_table = "mv_cross" if has_prog_filter else "mv_resumen"
+    where_r = where_base + fw
+    where_r_sql = " AND ".join(where_r)
+    params_r = params_base + fp
+
+    totals = query_one(conn, f"""
+        SELECT SUM(personas) AS personas,
+               SUM(beneficios) AS beneficios,
+               SUM(montos) AS montos
+        FROM {resumen_table} WHERE {where_r_sql}
+    """, params_r)
+
+    personas = int(totals["personas"] or 0) if totals else 0
+    beneficios = int(totals["beneficios"] or 0) if totals else 0
+    montos = float(totals["montos"] or 0) if totals else 0
+
+    # Prestaciones activas = persona-programa pairs (siempre de mv_cross)
+    where_c = where_base + fw
+    where_c_sql = " AND ".join(where_c)
+    params_c = params_base + fp
+
+    cross_totals = query_one(conn, f"""
+        SELECT SUM(personas) AS prestaciones
+        FROM mv_cross WHERE {where_c_sql}
+    """, params_c)
+    prestaciones = int(cross_totals["prestaciones"] or 0) if cross_totals else 0
+    prom_prest = round(prestaciones / personas, 2) if personas else 0
+
+    # Desglose por programa (de mv_cross)
+    progs = query(conn, f"""
+        SELECT nombre_programa,
+               SUM(personas) AS personas,
+               SUM(beneficios) AS beneficios,
+               SUM(montos) AS montos
+        FROM mv_cross WHERE {where_c_sql}
+        GROUP BY nombre_programa
+        ORDER BY SUM(personas) DESC
+        LIMIT 5
+    """, params_c)
+
+    programas = []
+    for p in progs:
+        pp = int(p["personas"] or 0)
+        pb = int(p["beneficios"] or 0)
+        programas.append({
+            "nombre": p["nombre_programa"],
+            "personas": pp,
+            "beneficios": pb,
+            "montos": float(p["montos"] or 0),
+        })
+
+    return {
+        "provincia": provincia,
+        "personas": personas,
+        "prestaciones": prestaciones,
+        "beneficios": beneficios,
+        "montos": round(montos),
+        "promPrestaciones": prom_prest,
+        "programas": programas,
     }

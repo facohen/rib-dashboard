@@ -429,21 +429,25 @@
 
 {% block content %}
 <div class="topbar">
-    <div class="topbar-title">Datos Nominales <small>/ Solo administradores</small></div>
-    <div class="period-selector">
-        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <rect x="3" y="4" width="18" height="18" rx="2" />
-            <line x1="16" y1="2" x2="16" y2="6" />
-            <line x1="8" y1="2" x2="8" y2="6" />
-            <line x1="3" y1="10" x2="21" y2="10" />
-        </svg>
-        Período:
-        <select class="period-select" id="periodSelect" onchange="changePeriod(this.value)">
-            {% for p in periodos %}<option value="{{ p }}" {% if p==default_period %}selected{% endif %}>{{ p }}
-            </option>{% endfor %}
-        </select>
+    <div class="topbar-row">
+        <div class="topbar-title">Datos Nominales <small>/ Solo administradores</small></div>
+        <div class="topbar-controls">
+            <div class="period-selector">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <rect x="3" y="4" width="18" height="18" rx="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                Período:
+                <select class="period-select" id="periodSelect" onchange="changePeriod(this.value)">
+                    {% for p in periodos %}<option value="{{ p }}" {% if p==default_period %}selected{% endif %}>{{ p }}
+                    </option>{% endfor %}
+                </select>
+            </div>
+            <span class="role-badge admin">admin</span>
+        </div>
     </div>
-    <span class="role-badge admin">admin</span>
 </div>
 
 <div class="content">
@@ -477,6 +481,27 @@
             </select>
         </div>
         <div class="filter-field">
+            <label class="filter-label">Rango etario</label>
+            <select class="filter-select" id="fGrupoEtario">
+                <option value="">Todos</option>
+                <option value="0-4">0-4 años</option>
+                <option value="5-12">5-12 años</option>
+                <option value="13-17">13-17 años</option>
+                <option value="18-29">18-29 años</option>
+                <option value="30-59">30-59 años</option>
+                <option value="60+">60+ años</option>
+            </select>
+        </div>
+        <div class="filter-field">
+            <label class="filter-label">Prestaciones</label>
+            <select class="filter-select" id="fCantPrest">
+                <option value="">Todas</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3+">3+</option>
+            </select>
+        </div>
+        <div class="filter-field">
             <label class="filter-label">Estado</label>
             <select class="filter-select" id="fEstado">
                 <option value="ACTIVO">Activo</option>
@@ -503,7 +528,6 @@
                         <th>Sexo</th>
                         <th>Edad</th>
                         <th>Provincia</th>
-                        <th>Departamento</th>
                         <th>Prestaciones</th>
                     </tr>
                 </thead>
@@ -554,6 +578,8 @@
             provincia: document.getElementById('fProvincia').value,
             programa: document.getElementById('fPrograma').value,
             sexo: document.getElementById('fSexo').value,
+            grupo_etario: document.getElementById('fGrupoEtario').value,
+            cant_prestaciones: document.getElementById('fCantPrest').value,
             estado: document.getElementById('fEstado').value,
         })
         return p.toString()
@@ -582,7 +608,7 @@
         document.getElementById('tableBody').innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted)">Cargando...</td></tr>'
         const r = await fetch(`/api/nominal/beneficiaries?${buildParams(page)}`)
         const d = await r.json()
-        document.getElementById('totalCount').textContent = d.total.toLocaleString('es-AR')
+        document.getElementById('totalCount').textContent = fmtFullAR(d.total)
         const totalPages = Math.ceil(d.total / pageSize)
         renderTable(d.items)
         renderPagination(page, totalPages, d.total)
@@ -590,7 +616,7 @@
 
     function renderTable(items) {
         const tb = document.getElementById('tableBody')
-        if (!items.length) { tb.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted)">Sin resultados para los filtros seleccionados</td></tr>'; return }
+        if (!items.length) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Sin resultados para los filtros seleccionados</td></tr>'; return }
         tb.innerHTML = items.map(b => {
             const [slabel, sclass] = SEXO_MAP[b.sexo] || ['—', 'tag-ni']
             const cntClass = b.cantPrestaciones === 1 ? 'tag-1' : b.cantPrestaciones === 2 ? 'tag-2' : 'tag-3'
@@ -600,7 +626,6 @@
       <td><span class="tag ${sclass}">${slabel}</span></td>
       <td>${b.edad ?? '—'}</td>
       <td>${sanitize(b.provincia)}</td>
-      <td class="td-muted">${sanitize(b.departamento)}</td>
       <td><span class="tag ${cntClass}">${b.cantPrestaciones}</span></td>
     </tr>`
         }).join('')
@@ -643,7 +668,7 @@
       <div class="info-item"><div class="lbl">Provincia</div><div class="val">${sanitize(b.provincia)}</div></div>
       <div class="info-item"><div class="lbl">Departamento</div><div class="val">${sanitize(b.departamento)}</div></div>
       <div class="info-item"><div class="lbl">CP</div><div class="val">${sanitize(b.cp || '—')}</div></div>
-      <div class="info-item"><div class="lbl">Monto período</div><div class="val" style="color:var(--green)">$${montoTotal.toLocaleString('es-AR', { minimumFractionDigits: 0 })}</div></div>
+      <div class="info-item"><div class="lbl">Monto período</div><div class="val" style="color:var(--green)">$${fmtFullAR(montoTotal, 2)}</div></div>
     </div>
     <div class="section-sep">Prestaciones activas en ${period}</div>
     ${b.prestaciones.map(p => `
@@ -658,7 +683,7 @@
           <div class="prg">${sanitize(p.nombre_programa)}</div>
           <div style="font-size:11px;color:var(--muted)">${sanitize(p.fecha_pago)}</div>
         </div>
-        <div class="monto">$${p.monto_prestacion.toLocaleString('es-AR', { minimumFractionDigits: 0 })}</div>
+        <div class="monto">$${fmtFullAR(p.monto_prestacion, 2)}</div>
       </div>`).join('') || '<div style="color:var(--muted);font-size:13px">Sin pagos para este período</div>'}
   `
     }

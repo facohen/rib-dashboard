@@ -160,6 +160,17 @@ for _name, _fn, _metric in _INDICATOR_ROUTES:
     _view.__name__ = f"api_{_name.replace('-', '_')}"
     app.add_url_rule(f"/api/indicators/{_name}", view_func=_view)
 
+@app.route("/api/indicators/provincia-detail")
+@login_required
+@cache.cached(key_prefix=_cache_key)
+def api_provincia_detail():
+    provincia = request.args.get("provincia", "").strip()
+    if not provincia:
+        return jsonify(error="provincia required"), 400
+    period = request.args.get("period", "2026-03")
+    return jsonify(queries.get_provincia_detail(get_db(), period, provincia, _filters()))
+
+
 @app.route("/api/admin/clear-cache", methods=["POST"])
 @admin_required
 def clear_cache():
@@ -174,7 +185,7 @@ def clear_cache():
 def api_nominal_list():
     period = request.args.get("period", "2026-03")
     filters = {k: request.args.get(k, "").strip() if k != "estado" else request.args.get(k, "ACTIVO")
-               for k in ("cuil", "provincia", "programa", "sexo", "estado")}
+               for k in ("cuil", "provincia", "programa", "sexo", "grupo_etario", "cant_prestaciones", "estado")}
     page = int(request.args.get("page", 1))
     page_size = int(request.args.get("pageSize", 20))
     return jsonify(queries.get_nominal_list(get_db(), period, filters, page, page_size))

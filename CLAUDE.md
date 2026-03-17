@@ -48,6 +48,20 @@ export DATABASE_URL=postgresql://postgres:postgres@localhost/rub
 
 No build step, no linting, no test suite configured.
 
+### IMPORTANTE: Comandos que NO debe ejecutar Claude
+
+Claude **NO debe ejecutar directamente** ninguno de los siguientes comandos del pipeline. Son operaciones pesadas y/o destructivas que el usuario debe ejecutar manualmente:
+
+- `python ingest.py` (menú interactivo)
+- `python seed_pg.py` (seedeo de datos)
+- `python create_matviews.py` (creación de MVs)
+- `python refresh_matviews.py` (refresh blue/green)
+- `python ingest_optimizado.py` (ingesta optimizada)
+- `python app.py` (servidor Flask)
+- Cualquier comando que inicie, reinicie o mate procesos del pipeline
+
+Si alguno de estos comandos es necesario, Claude debe **pedir al usuario que lo ejecute** y esperar confirmación antes de continuar.
+
 ## Demo Credentials
 
 - Admin: `admin@demo.local` / `Demo123!` (full access including nominal view)

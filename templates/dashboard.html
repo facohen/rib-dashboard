@@ -3,41 +3,38 @@
 
 {% block content %}
 <div class="topbar">
-    <div class="topbar-title">
-        Dashboard SIIS
-        <small>/ Inicio</small>
+    <div class="topbar-row">
+        <div class="topbar-filters" id="filterBadges"></div>
+        <div class="topbar-controls">
+            <div class="period-selector">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                    <line x1="16" y1="2" x2="16" y2="6" />
+                    <line x1="8" y1="2" x2="8" y2="6" />
+                    <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                Período:
+                <select class="period-select" id="periodSelect" onchange="onPeriodChange(this.value)">
+                    {% for p in periodos %}
+                    <option value="{{ p }}" {% if p==default_period %}selected{% endif %}>{{ p }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="metric-toggle" id="metricToggle">
+                <button class="metric-btn active" data-metric="personas" onclick="setMetric('personas')">Personas</button>
+                <button class="metric-btn" data-metric="beneficios" onclick="setMetric('beneficios')">Beneficios</button>
+                <button class="metric-btn" data-metric="montos" onclick="setMetric('montos')">Montos</button>
+            </div>
+            <button onclick="toggleTheme()" title="Cambiar Tema"
+                style="padding:6px; border-radius:50%; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; display:flex; align-items:center; justify-content:center; width:34px; height:34px;">
+                <span id="themeIcon">☀️</span>
+            </button>
+            <span class="role-badge {{ role }}">{{ role }}</span>
+        </div>
     </div>
-    <div class="period-selector">
-        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-            <line x1="16" y1="2" x2="16" y2="6" />
-            <line x1="8" y1="2" x2="8" y2="6" />
-            <line x1="3" y1="10" x2="21" y2="10" />
-        </svg>
-        Período:
-        <select class="period-select" id="periodSelect" onchange="onPeriodChange(this.value)">
-            {% for p in periodos %}
-            <option value="{{ p }}" {% if p==default_period %}selected{% endif %}>{{ p }}</option>
-            {% endfor %}
-        </select>
-    </div>
-    <!-- Metric Toggle -->
-    <div class="metric-toggle" id="metricToggle">
-        <button class="metric-btn active" data-metric="personas" onclick="setMetric('personas')">Personas</button>
-        <button class="metric-btn" data-metric="beneficios" onclick="setMetric('beneficios')">Beneficios</button>
-        <button class="metric-btn" data-metric="montos" onclick="setMetric('montos')">Montos</button>
-    </div>
-    <!-- Theme Toggle -->
-    <button class="theme-btn btn-ghost" onclick="toggleTheme()" title="Cambiar Tema"
-        style="margin-left:auto; margin-right: 16px; padding:6px; border-radius:50%; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; display:flex; align-items:center; justify-content:center; width:34px; height:34px;">
-        <span id="themeIcon">☀️</span>
-    </button>
-    <span class="role-badge {{ role }}">{{ role }}</span>
 </div>
 
 <div class="content">
-    <!-- FILTER BADGES -->
-    <div id="filterBadges" style="display:none; flex-wrap:wrap; gap:8px; margin-bottom:12px; align-items:center;"></div>
 
     <!-- KPI CARDS -->
     <div class="kpi-grid" id="kpiGrid">
@@ -53,6 +50,12 @@
             <div class="kpi-value" id="kpi-monto-total">—</div>
             <div class="kpi-sub">Liquidado en el período</div>
         </div>
+        <div class="kpi-card kpi-primary">
+            <div class="kpi-icon">📋</div>
+            <div class="kpi-label">Prestaciones activas</div>
+            <div class="kpi-value" id="kpi-prestaciones-activas">—</div>
+            <div class="kpi-sub">Programas por persona</div>
+        </div>
         <div class="kpi-card">
             <div class="kpi-icon">📊</div>
             <div class="kpi-label">Prom. prestaciones</div>
@@ -65,12 +68,6 @@
             <div class="kpi-value" id="kpi-prom-monto">—</div>
             <div class="kpi-sub">Por beneficiario</div>
         </div>
-        <div class="kpi-card kpi-primary">
-            <div class="kpi-icon">📋</div>
-            <div class="kpi-label">Programas activos</div>
-            <div class="kpi-value" id="kpi-cant-programas">—</div>
-            <div class="kpi-sub">En el período</div>
-        </div>
     </div>
 
     <!-- CHARTS -->
@@ -78,7 +75,7 @@
         <!-- Row 1: Programa + Secretaría + Concentración -->
         <div class="chart-card col-4">
             <h3>Por Programa</h3>
-            <div class="chart-sub">Distribución entre programas</div>
+            <div class="chart-sub">Una persona puede percibir más de un programa</div>
             <div class="chart-wrap"><canvas id="chartPrograma" height="220"></canvas></div>
         </div>
         <div class="chart-card col-4">
@@ -87,8 +84,8 @@
             <div class="chart-wrap"><canvas id="chartSecretaria" height="220"></canvas></div>
         </div>
         <div class="chart-card col-4">
-            <h3>Concentración</h3>
-            <div class="chart-sub">Prestaciones por beneficiario</div>
+            <h3>Combinación de Prestaciones</h3>
+            <div class="chart-sub">Total beneficiarios por cantidad de prestaciones percibidas</div>
             <div class="chart-wrap"><canvas id="chartConcentracion" height="220"></canvas></div>
         </div>
 
@@ -107,15 +104,16 @@
         </div>
         <div class="chart-card col-6">
             <h3>Distribución por Sexo</h3>
-            <div class="chart-sub">Género de los beneficiarios</div>
+            <div class="chart-sub">Sexo de los beneficiarios</div>
             <div class="chart-wrap"><canvas id="chartSexo" height="200"></canvas></div>
         </div>
 
         <!-- Row 4: Mapa + Provincia barras horizontales -->
-        <div class="chart-card col-6">
-            <h3>Mapa Geográfico</h3>
-            <div class="chart-sub">Concentración por provincia</div>
+        <div class="chart-card col-6" style="position:relative;">
+            <h3>Distribución por Provincia</h3>
+            <div class="chart-sub">Concentración geográfica</div>
             <div id="map-argentina" style="width:100%; height:720px; border-radius:8px; z-index:1;"></div>
+            <div id="map-tooltip" class="map-tooltip" style="display:none;"></div>
         </div>
         <div class="chart-card col-6">
             <h3>Distribución Provincial</h3>
@@ -183,27 +181,23 @@
         if (!container) return
         const keys = Object.keys(globalChartFilters)
         if (keys.length === 0) {
-            container.style.display = 'none'
+            container.innerHTML = ''
             return
         }
-        container.style.display = 'flex'
         const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
-        container.innerHTML = keys.map(k => {
-            const safeK = esc(k), safeV = esc(globalChartFilters[k])
-            return `<span class="filter-badge">${safeK}: <strong>${safeV}</strong> <span onclick="setFilter('${safeK}','${safeV}')" style="cursor:pointer;margin-left:4px;">✕</span></span>`
-        }).join('') + `<span class="filter-badge filter-clear" onclick="clearFilters()" style="cursor:pointer;">Limpiar filtros</span>`
+        container.innerHTML =
+            keys.map(k => {
+                const safeK = esc(k), safeV = esc(globalChartFilters[k])
+                return `<span class="filter-badge">${safeK}: <strong>${safeV}</strong> <span class="filter-x" onclick="setFilter('${safeK}','${safeV}')">✕</span></span>`
+            }).join('') +
+            `<span class="filter-badge filter-clear" onclick="clearFilters()">Limpiar todo</span>`
     }
 
     function isMoneyMetric() {
         return globalMetric === 'montos'
     }
 
-    function fmtBig(n) {
-        if (n >= 1e9) return '$' + (n / 1e9).toFixed(1) + 'B';
-        if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
-        if (n >= 1e3) return '$' + (n / 1e3).toFixed(0) + 'k';
-        return '$' + (n || 0);
-    }
+    // fmtBig removed — use fmtAR(n, '$') from base.html
 
     // Theme logic
     function initTheme() {
@@ -228,17 +222,7 @@
 
     window.onPeriodChange = function(p) { period = p; clearFilters() }
 
-    function fmt(n) {
-        if (n >= 1000000) return '$' + (n / 1000000).toFixed(1) + 'M'
-        if (n >= 1000) return '$' + (n / 1000).toFixed(0) + 'k'
-        return n
-    }
-
-    function fmtNum(n) {
-        if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
-        if (n >= 1000) return (n / 1000).toFixed(0) + 'k'
-        return n
-    }
+    // fmt, fmtNum removed — use fmtAR from base.html
 
     function themeColors() {
         const isLight = document.body.classList.contains('light-theme')
@@ -291,24 +275,24 @@
                             label: c => {
                                 const sum = c.chart.data.datasets[0].data.reduce((a, b) => a + Number(b), 0);
                                 const pct = ((c.raw * 100) / sum).toFixed(1) + '%';
-                                const val = isMoneyMetric() ? fmtBig(c.raw) : c.raw.toLocaleString('es-AR');
+                                const val = isMoneyMetric() ? '$' + fmtFullAR(c.raw, 2) : fmtFullAR(c.raw);
                                 return ` ${c.label}: ${val} (${pct})`;
                             }
-                        } : (isMoneyMetric() && type === 'bar' ? {
-                            label: c => c.label + ': ' + fmtBig(c.raw)
-                        } : {})),
+                        } : {
+                            label: c => c.label + ': ' + (isMoneyMetric() ? '$' : '') + fmtFullAR(c.raw, isMoneyMetric() ? 2 : 0)
+                        }),
                     },
                     datalabels: {
                         color: dlc,
                         font: { weight: 'bold', size: 11 },
                         formatter: (value, context) => {
                             if (value <= 0) return '';
-                            if (isMoneyMetric() && type === 'bar') return fmtBig(value);
+                            if (isMoneyMetric() && type === 'bar') return fmtAR(value, '$');
                             const dataArr = context.chart.data.datasets[0].data;
                             const sum = dataArr.reduce((a, b) => a + Number(b), 0);
                             const pct = ((value * 100) / sum).toFixed(1) + '%';
                             if (type === 'doughnut') {
-                                const valStr = isMoneyMetric() ? fmtBig(value) : value.toLocaleString('es-AR');
+                                const valStr = isMoneyMetric() ? fmtAR(value, '$') : fmtAR(value);
                                 return pct + '\n' + valStr;
                             }
                             return pct;
@@ -323,7 +307,7 @@
                 },
                 scales: type === 'bar' ? {
                     x: { ticks: { color: tc, font: { size: 11 } }, grid: { color: gc } },
-                    y: { ticks: { color: tc, font: { size: 11 } }, grid: { color: gc } }
+                    y: { ticks: { display: false }, grid: { color: gc } }
                 } : {},
                 ...opts.chart,
             }
@@ -348,26 +332,31 @@
                     legend: { display: false },
                     tooltip: {
                         backgroundColor: tooltipBg, borderColor: tooltipBorder, borderWidth: 1,
-                        titleColor: '#e4e6f0', bodyColor: 'rgba(255,255,255,0.7)'
+                        titleColor: '#e4e6f0', bodyColor: 'rgba(255,255,255,0.7)',
+                        callbacks: {
+                            label: c => c.label + ': ' + (isMoneyMetric() ? '$' : '') + fmtFullAR(c.raw, isMoneyMetric() ? 2 : 0)
+                        }
                     },
                     datalabels: {
                         color: dlc,
                         font: { weight: 'bold', size: 11 },
                         formatter: (value, context) => {
                             if (value <= 0) return '';
+                            if (isMoneyMetric()) return fmtAR(value, '$');
                             const dataArr = context.chart.data.datasets[0].data;
                             const sum = dataArr.reduce((a, b) => a + Number(b), 0);
-                            return ((value * 100) / sum).toFixed(1) + '%';
+                            const pct = ((value * 100) / sum).toFixed(1) + '%';
+                            return fmtAR(value) + '  (' + pct + ')';
                         },
                         anchor: 'end',
-                        align: 'start',
+                        align: 'end',
                         offset: 4,
                         textShadowBlur: 4,
                         textShadowColor: dls
                     }
                 },
                 scales: {
-                    x: { ticks: { color: tc, font: { size: 11 } }, grid: { color: gc } },
+                    x: { ticks: { color: tc, font: { size: 11 }, callback: v => fmtAR(v, isMoneyMetric() ? '$' : '') }, grid: { color: gc } },
                     y: { ticks: { color: tc, font: { size: 11 } }, grid: { display: false } }
                 }
             }
@@ -375,23 +364,75 @@
     }
 
     function renderSummary(d) {
-        document.getElementById('kpi-cobertura').textContent = d.cobertura.toLocaleString('es-AR')
-        document.getElementById('kpi-monto-total').textContent = fmt(d.montoTotal)
+        document.getElementById('kpi-cobertura').textContent = fmtAR(d.cobertura)
+        document.getElementById('kpi-monto-total').textContent = fmtAR(d.montoTotal, '$')
+        document.getElementById('kpi-prestaciones-activas').textContent = fmtAR(d.prestacionesActivas)
         document.getElementById('kpi-prom-prest').textContent = d.promedioPrestaciones.toFixed(2)
-        document.getElementById('kpi-prom-monto').textContent = fmt(d.promedioMontoPorBenef)
-        document.getElementById('kpi-cant-programas').textContent = d.cantidadProgramas
+        document.getElementById('kpi-prom-monto').textContent = fmtAR(d.promedioMontoPorBenef, '$')
         const c = d.concentracion
         const concValues = ['1', '2', '3+']
-        makeChart('chartConcentracion', 'doughnut',
-            ['1 prestación', '2 prestaciones', '3+ prestaciones'],
-            [c.conUna, c.conDos, c.conTresMas],
-            ['#4a67ff', '#7c3aed', '#10b981']
-        )
-        if (charts['chartConcentracion']) {
-            charts['chartConcentracion'].options.onClick = (evt, elements) => {
-                if (!elements.length) return
-                setFilter('cant_prestaciones', concValues[elements[0].index])
-            }
+        const concLabels = ['1 prestación', '2 prestaciones', '3+ prestaciones']
+        const concData = [c.conUna, c.conDos, c.conTresMas]
+        const concColors = ['#4a67ff', '#7c3aed', '#10b981']
+        const {dlc, dls, tooltipBg, tooltipBorder, chartBorder} = themeColors()
+        const ctxConc = document.getElementById('chartConcentracion')
+        if (ctxConc) {
+            if (charts['chartConcentracion']) charts['chartConcentracion'].destroy()
+            charts['chartConcentracion'] = new Chart(ctxConc, {
+                type: 'doughnut',
+                data: {
+                    labels: concLabels,
+                    datasets: [{
+                        data: concData,
+                        backgroundColor: concColors,
+                        borderColor: chartBorder,
+                        borderWidth: 2,
+                        hoverOffset: 8,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    layout: { padding: { top: 5, left: 5, right: 5, bottom: 5 } },
+                    plugins: {
+                        legend: {
+                            position: 'left',
+                            align: 'start',
+                            labels: { color: dlc, font: { size: 10, family: 'Inter' }, padding: 8, boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: 'circle' }
+                        },
+                        tooltip: {
+                            backgroundColor: tooltipBg, borderColor: tooltipBorder, borderWidth: 1,
+                            titleColor: '#e4e6f0', bodyColor: 'rgba(255,255,255,0.7)',
+                            callbacks: {
+                                label: ctx => {
+                                    const sum = ctx.chart.data.datasets[0].data.reduce((a, b) => a + Number(b), 0)
+                                    const pct = ((ctx.raw * 100) / sum).toFixed(1) + '%'
+                                    return ` ${ctx.label}: ${fmtFullAR(ctx.raw)} (${pct})`
+                                }
+                            }
+                        },
+                        datalabels: {
+                            color: dlc,
+                            font: { weight: 'bold', size: 11 },
+                            anchor: 'end',
+                            align: 'end',
+                            offset: 6,
+                            textAlign: 'center',
+                            textShadowBlur: 4,
+                            textShadowColor: dls,
+                            formatter: (value, context) => {
+                                if (value <= 0) return ''
+                                const sum = context.chart.data.datasets[0].data.reduce((a, b) => a + Number(b), 0)
+                                const pct = ((value * 100) / sum).toFixed(1) + '%'
+                                return pct + '\n' + fmtAR(value)
+                            }
+                        }
+                    },
+                    onClick: (evt, elements) => {
+                        if (!elements.length) return
+                        setFilter('cant_prestaciones', concValues[elements[0].index])
+                    }
+                }
+            })
         }
     }
 
@@ -404,13 +445,66 @@
 
     function renderSecretaria(d) {
         const fullLabels = d.map(x => x.secretaria)
-        const labels = fullLabels.map(s => s.replace('Secretaría de ', ''))
-        makeChart('chartSecretaria', 'bar', labels, d.map(x => x.total), COLORS)
-        if (charts['chartSecretaria']) {
-            charts['chartSecretaria'].options.onClick = (evt, elements) => {
-                if (!elements.length) return
-                setFilter('secretaria', fullLabels[elements[0].index])
+        // Word-wrap: split long labels into arrays of ~2 words per line
+        const labels = fullLabels.map(s => {
+            const short = s.replace('Secretaría de ', '')
+            const words = short.split(' ')
+            const lines = []
+            for (let i = 0; i < words.length; i += 2) {
+                lines.push(words.slice(i, i + 2).join(' '))
             }
+            return lines
+        })
+        const data = d.map(x => x.total)
+        const {tc, gc, dlc, dls, tooltipBg, tooltipBorder} = themeColors()
+        const ctx = document.getElementById('chartSecretaria')
+        if (!ctx) return
+        if (charts['chartSecretaria']) charts['chartSecretaria'].destroy()
+        const colors = data.map((_, i) => COLORS[i % COLORS.length])
+        charts['chartSecretaria'] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data,
+                    backgroundColor: colors.map(c => c + '99'),
+                    borderColor: colors,
+                    borderWidth: 1,
+                    borderRadius: 6,
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: tooltipBg, borderColor: tooltipBorder, borderWidth: 1,
+                        titleColor: '#e4e6f0', bodyColor: 'rgba(255,255,255,0.7)',
+                        callbacks: {
+                            title: items => fullLabels[items[0].dataIndex],
+                            label: c => (isMoneyMetric() ? '$' : '') + fmtFullAR(c.raw, isMoneyMetric() ? 2 : 0)
+                        }
+                    },
+                    datalabels: {
+                        color: dlc,
+                        font: { weight: 'bold', size: 11 },
+                        formatter: v => v <= 0 ? '' : fmtAR(v, isMoneyMetric() ? '$' : ''),
+                        anchor: 'end',
+                        align: 'end',
+                        offset: 2,
+                        textShadowBlur: 4,
+                        textShadowColor: dls
+                    }
+                },
+                scales: {
+                    x: { ticks: { color: tc, font: { size: 11 }, maxRotation: 0, autoSkip: false }, grid: { color: gc } },
+                    y: { ticks: { display: false }, grid: { color: gc } }
+                },
+            }
+        })
+        charts['chartSecretaria'].options.onClick = (evt, elements) => {
+            if (!elements.length) return
+            setFilter('secretaria', fullLabels[elements[0].index])
         }
     }
 
@@ -421,14 +515,14 @@
         renderSecretaria(d)
     }
 
-    function renderSexo(d) {
-        const labels = d.map(x => x.label)
-        makeChart('chartSexo', 'doughnut', labels, d.map(x => x.total),
-            ['#4a67ff', '#ec4899', '#10b981', '#f59e0b'])
+    function renderSexo(sexoData) {
+        const labels = sexoData.map(x => x.label)
+        makeChart('chartSexo', 'bar', labels, sexoData.map(x => x.total),
+            ['#f59e0b', '#8b5cf6', '#10b981', '#f97316', '#ef4444'])
         if (charts['chartSexo']) {
             charts['chartSexo'].options.onClick = (evt, elements) => {
                 if (!elements.length) return
-                setFilter('sexo', d[elements[0].index].sexo)
+                setFilter('sexo', sexoData[elements[0].index].sexo)
             }
         }
     }
@@ -461,12 +555,55 @@
 
     function renderPrograma(d) {
         const labels = d.map(x => x.programa)
-        makeChart('chartPrograma', 'bar', labels, d.map(x => x.total))
-        if (charts['chartPrograma']) {
-            charts['chartPrograma'].options.onClick = (evt, elements) => {
-                if (!elements.length) return
-                setFilter('programa', labels[elements[0].index])
+        const data = d.map(x => x.total)
+        const {tc, gc, dlc, dls, tooltipBg, tooltipBorder} = themeColors()
+        const ctx = document.getElementById('chartPrograma')
+        if (!ctx) return
+        if (charts['chartPrograma']) charts['chartPrograma'].destroy()
+        const defaultColors = data.map((_, i) => COLORS[i % COLORS.length])
+        charts['chartPrograma'] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data,
+                    backgroundColor: defaultColors.map(c => c + '99'),
+                    borderRadius: 5,
+                    borderSkipped: false,
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: tooltipBg, borderColor: tooltipBorder, borderWidth: 1,
+                        titleColor: '#e4e6f0', bodyColor: 'rgba(255,255,255,0.7)',
+                        callbacks: {
+                            label: c => c.label + ': ' + (isMoneyMetric() ? '$' : '') + fmtFullAR(c.raw, isMoneyMetric() ? 2 : 0)
+                        }
+                    },
+                    datalabels: {
+                        color: dlc,
+                        font: { weight: 'bold', size: 11 },
+                        formatter: v => v <= 0 ? '' : fmtAR(v, isMoneyMetric() ? '$' : ''),
+                        anchor: 'end',
+                        align: 'end',
+                        offset: 2,
+                        textShadowBlur: 4,
+                        textShadowColor: dls
+                    }
+                },
+                scales: {
+                    x: { ticks: { display: false }, grid: { color: gc } },
+                    y: { ticks: { color: tc, font: { size: 11 } }, grid: { display: false } }
+                },
             }
+        })
+        charts['chartPrograma'].options.onClick = (evt, elements) => {
+            if (!elements.length) return
+            setFilter('programa', labels[elements[0].index])
         }
     }
 
@@ -542,14 +679,14 @@
                     tooltip: {
                         backgroundColor: tooltipBg,
                         titleColor: '#fff', bodyColor: 'rgba(255,255,255,0.8)', padding: 10,
-                        callbacks: { label: c => 'Total: ' + (isMoneyMetric() ? fmtBig(c.raw) : c.raw.toLocaleString('es-AR')) }
+                        callbacks: { label: c => 'Total: ' + (isMoneyMetric() ? '$' : '') + fmtFullAR(c.raw, isMoneyMetric() ? 2 : 0) }
                     },
                     datalabels: { display: false }
                 },
                 scales: {
                     x: { ticks: { color: tc, font: { size: 11 } }, grid: { display: false } },
                     y: {
-                        ticks: { color: tc, font: { size: 11 }, callback: v => isMoneyMetric() ? fmtBig(v) : fmtNum(v) },
+                        ticks: { color: tc, font: { size: 11 }, callback: v => fmtAR(v, isMoneyMetric() ? '$' : '') },
                         grid: { color: gc, borderDash: [4, 4] }
                     }
                 }
@@ -570,6 +707,101 @@
     let geoJsonData = null
 
     const VIOLET_PALETTE = ['#ede9fe','#ddd6fe','#c4b5fd','#a78bfa','#8b5cf6','#7c3aed','#5b21b6']
+
+    // ── Rich map tooltip ──
+    let provinciaDetailCache = {}
+    let tooltipDebounceTimer = null
+    let activeProvinciaHover = null
+
+    const PROG_COLORS = ['#4a67ff','#7c3aed','#10b981','#f59e0b','#ef4444']
+
+    function tooltipLoadingHtml(name) {
+        return `<div class="mtt-accent"></div>
+                <div class="mtt-header">${name}</div>
+                <div class="mtt-loading">
+                    <div class="mtt-skeleton"></div>
+                    <div class="mtt-skeleton short"></div>
+                    <div class="mtt-skeleton bar"></div>
+                    <div class="mtt-skeleton"></div>
+                    <div class="mtt-skeleton bar"></div>
+                </div>`
+    }
+
+    async function fetchProvinciaDetail(provincia) {
+        const key = `${period}_${provincia}_${globalMetric}_${JSON.stringify(globalChartFilters)}`
+        if (provinciaDetailCache[key]) return provinciaDetailCache[key]
+        let qs = filterQS()
+        qs += `&provincia=${encodeURIComponent(provincia)}`
+        const resp = await fetch(`/api/indicators/provincia-detail?${qs}`)
+        const data = await resp.json()
+        provinciaDetailCache[key] = data
+        return data
+    }
+
+    function renderMapTooltip(data) {
+        const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        const maxPct = Math.max(...data.programas.map(p => p.pct), 1)
+        const barsHtml = data.programas.map((p, i) => {
+            const color = PROG_COLORS[i % PROG_COLORS.length]
+            return `<div class="mtt-prog-row">
+                <div class="mtt-prog-rank" style="background:${color}">${i + 1}</div>
+                <div class="mtt-prog-info">
+                    <div class="mtt-prog-name" title="${esc(p.nombre)}">${esc(p.nombre)}</div>
+                    <div class="mtt-prog-bar-wrap"><div class="mtt-prog-bar" style="width:${(p.pct / maxPct * 100).toFixed(0)}%;background:${color}"></div></div>
+                </div>
+                <div class="mtt-prog-stats">
+                    <div class="mtt-prog-val">${fmtAR(p.personas)}</div>
+                    <div class="mtt-prog-benef">${fmtAR(p.montos, '$')}</div>
+                </div>
+            </div>`
+        }).join('')
+
+        const pctNacional = cachedData.summary
+            ? ((data.personas / cachedData.summary.cobertura) * 100).toFixed(1) + '% del total nacional'
+            : ''
+
+        return `<div class="mtt-accent"></div>
+            <div class="mtt-header">${esc(data.provincia)}</div>
+            <div class="mtt-header-sub">${pctNacional}</div>
+            <div class="mtt-kpis">
+                <div class="mtt-kpi">
+                    <div class="mtt-kpi-icon">👥</div>
+                    <div class="mtt-kpi-label">Personas</div>
+                    <div class="mtt-kpi-value">${fmtFullAR(data.personas)}</div>
+                </div>
+                <div class="mtt-kpi">
+                    <div class="mtt-kpi-icon">📋</div>
+                    <div class="mtt-kpi-label">Prestaciones</div>
+                    <div class="mtt-kpi-value">${fmtFullAR(data.prestaciones)}</div>
+                </div>
+                <div class="mtt-kpi">
+                    <div class="mtt-kpi-icon">📊</div>
+                    <div class="mtt-kpi-label">Prom. prest.</div>
+                    <div class="mtt-kpi-value">${data.promPrestaciones.toFixed(2)}</div>
+                </div>
+                <div class="mtt-kpi">
+                    <div class="mtt-kpi-icon">💰</div>
+                    <div class="mtt-kpi-label">Montos</div>
+                    <div class="mtt-kpi-value">${fmtAR(data.montos, '$')}</div>
+                </div>
+            </div>
+            <div class="mtt-section-title">Top programas</div>
+            <div class="mtt-progs">${barsHtml}</div>`
+    }
+
+    function positionTooltip(e) {
+        const tooltip = document.getElementById('map-tooltip')
+        const mapDiv = document.getElementById('map-argentina')
+        const mapRect = mapDiv.getBoundingClientRect()
+        const tooltipW = 320, tooltipH = tooltip.offsetHeight || 280
+        let left = e.originalEvent.clientX - mapRect.left + 16
+        let top = e.originalEvent.clientY - mapRect.top - tooltipH / 2
+        if (left + tooltipW > mapRect.width) left = left - tooltipW - 32
+        if (top < 8) top = 8
+        if (top + tooltipH > mapRect.height - 8) top = mapRect.height - tooltipH - 8
+        tooltip.style.left = left + 'px'
+        tooltip.style.top = top + 'px'
+    }
 
     function quantileBreaks(values, nClasses) {
         const sorted = [...values].filter(v => v > 0).sort((a, b) => a - b)
@@ -674,21 +906,30 @@
                 },
                 onEachFeature: function(feature, layer) {
                     const name = feature.properties.nombre
-                    const val = lookup[name] || 0
-                    const valLabel = isMoneyMetric()
-                        ? fmtBig(val)
-                        : val.toLocaleString('es-AR') + ' ' + globalMetric
-                    layer.bindTooltip(
-                        `<strong>${name}</strong><br>${valLabel}`,
-                        { sticky: true, className: 'leaflet-tooltip' }
-                    )
                     layer.on('click', () => setFilter('provincia', name))
-                    layer.on('mouseover', function() {
+                    layer.on('mouseover', function(e) {
                         this.setStyle({ weight: 3, fillOpacity: 0.9 })
                         this.bringToFront()
+                        activeProvinciaHover = name
+                        const tooltip = document.getElementById('map-tooltip')
+                        tooltip.innerHTML = tooltipLoadingHtml(name)
+                        tooltip.style.display = 'block'
+                        positionTooltip(e)
+                        clearTimeout(tooltipDebounceTimer)
+                        tooltipDebounceTimer = setTimeout(async () => {
+                            if (activeProvinciaHover !== name) return
+                            const data = await fetchProvinciaDetail(name)
+                            if (activeProvinciaHover !== name) return
+                            tooltip.innerHTML = renderMapTooltip(data)
+                            positionTooltip(e)
+                        }, 120)
                     })
+                    layer.on('mousemove', function(e) { positionTooltip(e) })
                     layer.on('mouseout', function() {
                         geoJsonLayer.resetStyle(this)
+                        activeProvinciaHover = null
+                        clearTimeout(tooltipDebounceTimer)
+                        document.getElementById('map-tooltip').style.display = 'none'
                     })
                 }
             }).addTo(leafletMap)
@@ -719,6 +960,7 @@
     }
 
     function loadAll() {
+        provinciaDetailCache = {}
         // Phase 1: KPIs first (most visible)
         loadSummary().then(() => {
             // Phase 2: visible charts (above fold)
