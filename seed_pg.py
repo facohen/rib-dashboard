@@ -164,11 +164,6 @@ CREATE TABLE beneficiaries (
     cp TEXT
 );
 
-CREATE TABLE secretarias (
-    id SERIAL PRIMARY KEY,
-    nombre TEXT UNIQUE NOT NULL
-);
-
 CREATE TABLE programs (
     id SERIAL PRIMARY KEY,
     secretaria_id INTEGER NOT NULL REFERENCES secretarias(id),
@@ -234,12 +229,6 @@ def run(num_beneficiaries=8_000_000):
     print("🗑️  Truncando tablas...")
     cur.execute("TRUNCATE payments, benefits, incompatibility_rules, programs, secretarias, beneficiaries, users RESTART IDENTITY CASCADE")
     conn.commit()
-
-    # ── Secretarías ──
-    for sec in SECRETARIAS:
-        cur.execute("INSERT INTO secretarias(nombre) VALUES(%s)", (sec,))
-    conn.commit()
-    print(f"  ✅ Secretarías creadas: {len(SECRETARIAS)}")
 
     # ── Usuarios ──
     cur.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(%s,%s,%s,%s)",

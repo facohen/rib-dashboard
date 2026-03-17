@@ -47,12 +47,15 @@ TABLES = [
             sexo TEXT, edad INTEGER, grupo_etario TEXT,
             provincia TEXT, departamento TEXT,
             cant_prestaciones TEXT, cant_beneficios INTEGER,
-            monto_total NUMERIC(14,2))""",
+            monto_total NUMERIC(14,2),
+            program_ids INTEGER[], active_program_ids INTEGER[])""",
      ["CREATE INDEX ON {name}(periodo_mes, apellido, nombre)",
       "CREATE INDEX ON {name}(periodo_mes, provincia)",
       "CREATE INDEX ON {name}(periodo_mes, sexo)",
       "CREATE INDEX ON {name}(periodo_mes, cant_prestaciones)",
-      "CREATE INDEX ON {name}(cuil)"]),
+      "CREATE INDEX ON {name}(cuil)",
+      "CREATE INDEX ON {name} USING gin(program_ids)",
+      "CREATE INDEX ON {name} USING gin(active_program_ids)"]),
 ]
 
 # ─── SQL compartido ──────────────────────────────────────
@@ -63,7 +66,8 @@ TEMP_TABLE_SQL = """
 CREATE TEMP TABLE _pp ON COMMIT DROP AS
 WITH base AS (
     SELECT COALESCE(b.beneficiary_id, -b.id) AS beneficiary_id, b.periodo_mes,
-           p.nombre_programa, p.secretaria_origen,
+           p.id AS program_id, b.estado_beneficio,
+           p.nombre_programa, s.nombre AS secretaria_origen,
            COALESCE(ben.provincia, 'Sin dato') AS provincia,
            COALESCE(ben.sexo, 'Sin dato') AS sexo,
            CASE
@@ -79,6 +83,7 @@ WITH base AS (
            COALESCE(pa.total_monto, 0) AS monto
     FROM benefits b
     JOIN programs p ON b.program_id = p.id
+    JOIN secretarias s ON p.secretaria_id = s.id
     LEFT JOIN beneficiaries ben ON b.beneficiary_id = ben.id
     LEFT JOIN (
         SELECT beneficiary_id, COUNT(DISTINCT program_id) AS cant_prog
@@ -96,12 +101,12 @@ WITH base AS (
     ) calc
     WHERE b.periodo_mes = %s
 )
-SELECT periodo_mes, nombre_programa, secretaria_origen,
+SELECT periodo_mes, program_id, estado_beneficio, nombre_programa, secretaria_origen,
        provincia, sexo, grupo_etario,
        CASE WHEN cant_prog = 1 THEN '1' WHEN cant_prog = 2 THEN '2' ELSE '3+' END AS cant_prestaciones,
        beneficiary_id, COUNT(*) AS cant_benefits, SUM(monto) AS person_monto
 FROM base
-GROUP BY periodo_mes, nombre_programa, secretaria_origen,
+GROUP BY periodo_mes, program_id, estado_beneficio, nombre_programa, secretaria_origen,
          provincia, sexo, grupo_etario,
          CASE WHEN cant_prog = 1 THEN '1' WHEN cant_prog = 2 THEN '2' ELSE '3+' END,
          beneficiary_id
@@ -138,20 +143,27 @@ WITH person_agg AS (
     SELECT periodo_mes, beneficiary_id, provincia, sexo, grupo_etario,
            cant_prestaciones,
            SUM(cant_benefits) AS cant_beneficios,
-           SUM(person_monto) AS monto_total
+           SUM(person_monto) AS monto_total,
+           array_agg(DISTINCT program_id) AS program_ids,
+           array_agg(DISTINCT program_id) FILTER (WHERE estado_beneficio = 'ACTIVO') AS active_program_ids
     FROM _pp
-    WHERE beneficiary_id > 0
     GROUP BY periodo_mes, beneficiary_id, provincia, sexo, grupo_etario,
              cant_prestaciones
 )
 SELECT pa.periodo_mes, pa.beneficiary_id,
-       ben.cuil, ben.nombre, ben.apellido,
+       COALESCE(ben.cuil, 'SIN CUIL') AS cuil,
+       COALESCE(ben.nombre, 'No identificado') AS nombre,
+       COALESCE(ben.apellido, 'No identificado') AS apellido,
        pa.sexo,
-       EXTRACT(YEAR FROM AGE(({period_date})::date, ben.fecha_nacimiento))::int AS edad,
-       pa.grupo_etario, pa.provincia, ben.departamento,
-       pa.cant_prestaciones, pa.cant_beneficios, pa.monto_total
+       CASE WHEN ben.id IS NOT NULL
+            THEN EXTRACT(YEAR FROM AGE(({period_date})::date, ben.fecha_nacimiento))::int
+            ELSE NULL END AS edad,
+       pa.grupo_etario, pa.provincia,
+       COALESCE(ben.departamento, 'Sin dato') AS departamento,
+       pa.cant_prestaciones, pa.cant_beneficios, pa.monto_total,
+       pa.program_ids, COALESCE(pa.active_program_ids, ARRAY[]::int[])
 FROM person_agg pa
-JOIN beneficiaries ben ON ben.id = pa.beneficiary_id
+LEFT JOIN beneficiaries ben ON ben.id = pa.beneficiary_id
 """
 
 

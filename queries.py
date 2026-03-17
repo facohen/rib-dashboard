@@ -362,43 +362,51 @@ def _use_mv_nominal(conn):
 
 
 def get_nominal_list(conn, period, filters, page, page_size):
-    cuil = filters.get("cuil", "")
-    provincia = filters.get("provincia", "")
-    programa_id = filters.get("programa", "")
-    sexo = filters.get("sexo", "")
-    estado = filters.get("estado", "ACTIVO")
     offset = (page - 1) * page_size
-
     if _use_mv_nominal(conn):
         return _nominal_from_mv(conn, period, filters, page, page_size, offset)
     return _nominal_from_raw(conn, period, filters, page, page_size, offset)
 
 
 def _nominal_from_mv(conn, period, filters, page, page_size, offset):
-    """Nominal desde mv_nominal — query directa sin JOINs."""
+    """Nominal desde mv_nominal. Todos los filtros resueltos contra la MV (sin semi-join)."""
     cuil = filters.get("cuil", "")
     provincia = filters.get("provincia", "")
     sexo = filters.get("sexo", "")
+    programa_id = filters.get("programa", "")
+    estado = filters.get("estado", "ACTIVO")
 
-    where = ["periodo_mes=%s"]
+    where = ["n.periodo_mes=%s"]
     params = [period]
     if provincia:
-        where.append("provincia=%s"); params.append(provincia)
+        where.append("n.provincia=%s"); params.append(provincia)
     if sexo:
-        where.append("sexo=%s"); params.append(sexo)
+        where.append("n.sexo=%s"); params.append(sexo)
     if cuil:
-        where.append("cuil LIKE %s"); params.append(f"{cuil}%")
+        where.append("n.cuil LIKE %s"); params.append(f"{cuil}%")
+
+    # Programa y estado: filtro directo contra arrays en la MV
+    if programa_id and estado == "ACTIVO":
+        where.append("n.active_program_ids @> ARRAY[%s]::int[]"); params.append(int(programa_id))
+    elif programa_id and estado == "INACTIVO":
+        where.append("n.program_ids @> ARRAY[%s]::int[]"); params.append(int(programa_id))
+        where.append("NOT (n.active_program_ids @> ARRAY[%s]::int[])"); params.append(int(programa_id))
+    elif programa_id:
+        where.append("n.program_ids @> ARRAY[%s]::int[]"); params.append(int(programa_id))
+    elif estado == "ACTIVO":
+        where.append("array_length(n.active_program_ids, 1) > 0")
+    elif estado == "INACTIVO":
+        where.append("array_length(n.program_ids, 1) > array_length(COALESCE(n.active_program_ids, '{}'), 1)")
 
     where_sql = " AND ".join(where)
 
-    # COUNT + data en una query con window function
     rows = query(conn, f"""
-        SELECT beneficiary_id AS id, cuil, nombre, apellido, sexo, edad,
-               provincia, departamento, cant_prestaciones, monto_total,
+        SELECT n.beneficiary_id AS id, n.cuil, n.nombre, n.apellido, n.sexo, n.edad,
+               n.provincia, n.departamento, n.cant_prestaciones, n.monto_total,
                COUNT(*) OVER() AS _total
-        FROM mv_nominal
+        FROM mv_nominal n
         WHERE {where_sql}
-        ORDER BY apellido, nombre
+        ORDER BY n.apellido, n.nombre
         LIMIT %s OFFSET %s
     """, params + [page_size, offset])
 
@@ -439,17 +447,30 @@ def _nominal_from_raw(conn, period, filters, page, page_size, offset):
     corte = _corte_date(period)
 
     rows = query(conn, f"""
-        SELECT ben.id, ben.cuil, ben.nombre, ben.apellido, ben.sexo,
-               EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento))::int AS edad,
-               ben.provincia, ben.departamento,
+        SELECT COALESCE(ben.id, -b.id) AS id,
+               COALESCE(ben.cuil, 'SIN CUIL') AS cuil,
+               COALESCE(ben.nombre, 'No identificado') AS nombre,
+               COALESCE(ben.apellido, 'No identificado') AS apellido,
+               COALESCE(ben.sexo, 'NI') AS sexo,
+               CASE WHEN ben.id IS NOT NULL
+                    THEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento))::int
+                    ELSE NULL END AS edad,
+               COALESCE(ben.provincia, 'Sin dato') AS provincia,
+               COALESCE(ben.departamento, 'Sin dato') AS departamento,
                COUNT(*) AS cant_prestaciones,
                COUNT(*) OVER() AS _total
         FROM benefits b
-        JOIN beneficiaries ben ON b.beneficiary_id=ben.id
+        LEFT JOIN beneficiaries ben ON b.beneficiary_id=ben.id
         WHERE {where_sql}
-        GROUP BY ben.id, ben.cuil, ben.nombre, ben.apellido, ben.sexo,
-                 ben.fecha_nacimiento, ben.provincia, ben.departamento
-        ORDER BY ben.apellido, ben.nombre
+        GROUP BY COALESCE(ben.id, -b.id),
+                 COALESCE(ben.cuil, 'SIN CUIL'),
+                 COALESCE(ben.nombre, 'No identificado'),
+                 COALESCE(ben.apellido, 'No identificado'),
+                 COALESCE(ben.sexo, 'NI'),
+                 ben.fecha_nacimiento,
+                 COALESCE(ben.provincia, 'Sin dato'),
+                 COALESCE(ben.departamento, 'Sin dato')
+        ORDER BY COALESCE(ben.apellido, 'No identificado'), COALESCE(ben.nombre, 'No identificado')
         LIMIT %s OFFSET %s
     """, [corte] + params + [page_size, offset])
 
@@ -465,13 +486,41 @@ def _nominal_from_raw(conn, period, filters, page, page_size, offset):
 
 
 def get_nominal_detail(conn, bid, period):
+    # Non-identified beneficiaries have negative IDs (= -benefits.id)
+    if bid < 0:
+        benefit_id = -bid
+        ben_row = query_one(conn, """
+            SELECT b.id, b.cuil_raw, b.periodo_mes, b.estado_beneficio,
+                   p.nombre_programa, s.nombre AS secretaria_origen
+            FROM benefits b
+            JOIN programs p ON b.program_id=p.id
+            JOIN secretarias s ON p.secretaria_id=s.id
+            WHERE b.id=%s
+        """, (benefit_id,))
+        if not ben_row:
+            return None
+        return {
+            "id": bid, "cuil": ben_row["cuil_raw"] or "SIN CUIL",
+            "nombre": "No identificado", "apellido": "No identificado",
+            "sexo": "NI", "edad": None,
+            "fecha_nacimiento": "—",
+            "provincia": "Sin dato", "departamento": "Sin dato",
+            "cp": None,
+            "prestaciones": [{"nombre_programa": ben_row["nombre_programa"],
+                              "secretaria_origen": ben_row["secretaria_origen"],
+                              "estado_beneficio": ben_row["estado_beneficio"],
+                              "periodo_mes": ben_row["periodo_mes"]}],
+            "pagos": [],
+        }
+
     ben = query_one(conn, "SELECT * FROM beneficiaries WHERE id=%s", (bid,))
     if not ben:
         return None
 
     prestaciones = query(conn, """
-        SELECT b.estado_beneficio, b.periodo_mes, p.nombre_programa, p.secretaria_origen
+        SELECT b.estado_beneficio, b.periodo_mes, p.nombre_programa, s.nombre AS secretaria_origen
         FROM benefits b JOIN programs p ON b.program_id=p.id
+        JOIN secretarias s ON p.secretaria_id=s.id
         WHERE b.beneficiary_id=%s AND b.periodo_mes=%s ORDER BY p.nombre_programa
     """, (bid, period))
 

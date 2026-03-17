@@ -626,6 +626,11 @@
         document.getElementById('drawer').classList.add('open')
         document.getElementById('drawerBody').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Cargando...</div>'
         const r = await fetch(`/api/nominal/beneficiaries/${id}?period=${period}`)
+        if (!r.ok) {
+            document.getElementById('drawerTitle').textContent = 'Error'
+            document.getElementById('drawerBody').innerHTML = '<div style="text-align:center;padding:40px;color:var(--red)">No se pudo cargar el detalle</div>'
+            return
+        }
         const b = await r.json()
         document.getElementById('drawerTitle').textContent = `${b.apellido}, ${b.nombre}`
         const montoTotal = b.pagos.reduce((s, p) => s + p.monto_prestacion, 0)

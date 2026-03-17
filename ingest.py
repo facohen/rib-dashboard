@@ -1233,124 +1233,361 @@ def _seed_demo():
 
 
 def _check_consistency(conn):
-    """Check de consistencia DB ↔ tablas materializadas ↔ API."""
+    """Check de consistencia e2e: DB ↔ MVs ↔ API (personas, beneficios, montos)."""
     cur = conn.cursor()
     passed = 0
     failed = 0
     skipped = 0
-    total = 6
+    checks = []
 
-    # 1. Schema: tablas core
+    def ok(msg):
+        nonlocal passed; passed += 1; checks.append(("✓", msg)); print(f"  ✓ {msg}")
+    def fail(msg):
+        nonlocal failed; failed += 1; checks.append(("✗", msg)); print(f"  ✗ {msg}")
+    def skip(msg):
+        nonlocal skipped; skipped += 1; checks.append(("⚠", msg)); print(f"  ⚠ {msg}")
+
+    # ── 1. Schema ──
     cur.execute("""SELECT tablename FROM pg_tables WHERE schemaname='public'
                    AND tablename IN ('beneficiaries','benefits','payments','programs',
-                                     'users','incompatibility_rules')""")
+                                     'secretarias','users','incompatibility_rules')""")
     tables = {r[0] for r in cur.fetchall()}
-    expected_tables = {'beneficiaries','benefits','payments','programs','users','incompatibility_rules'}
-    found_tables = len(tables & expected_tables)
-    if found_tables >= 5:
-        print(f"  ✓ Schema: {found_tables}/{len(expected_tables)} tablas core")
-        passed += 1
+    expected = {'beneficiaries','benefits','payments','programs','secretarias','users','incompatibility_rules'}
+    n = len(tables & expected)
+    ok(f"Schema: {n}/{len(expected)} tablas core") if n >= 6 else fail(f"Schema: solo {n}/{len(expected)} tablas core")
+
+    # ── 2. MVs existen ──
+    cur.execute("""SELECT table_name FROM information_schema.tables
+                   WHERE table_schema='public' AND table_name IN ('mv_cross','mv_resumen')""")
+    mvs = {r[0] for r in cur.fetchall()}
+    mv_ok = 'mv_cross' in mvs and 'mv_resumen' in mvs
+    if mv_ok:
+        ok("Tablas materializadas: mv_cross + mv_resumen")
+    elif mvs:
+        skip(f"Tablas materializadas: solo {mvs}")
     else:
-        print(f"  ✗ Schema: solo {found_tables}/{len(expected_tables)} tablas core")
-        failed += 1
+        fail("Tablas materializadas: no existen")
+        print(f"\n  {passed}/{passed+failed+skipped} checks, {failed} failed, {skipped} skipped")
+        return
 
-    # 2. Tablas materializadas existen
-    cur.execute("""SELECT COUNT(*) FROM information_schema.tables
-                   WHERE table_schema='public' AND table_name IN ('mv_cross', 'mv_resumen')""")
-    mv_count = cur.fetchone()[0]
-    if mv_count == 2:
-        print(f"  ✓ Tablas materializadas: {mv_count}/2")
-        passed += 1
-    elif mv_count > 0:
-        print(f"  ⚠ Tablas materializadas: {mv_count}/2 (falta alguna)")
-        passed += 1
-    else:
-        print(f"  ✗ Tablas materializadas: 0/2 (no creadas)")
-        failed += 1
-        for _ in range(3):
-            skipped += 1
+    # ── Obtener periodos para checks ──
+    cur.execute("SELECT DISTINCT periodo_mes FROM mv_resumen ORDER BY periodo_mes")
+    all_periods = [r[0] for r in cur.fetchall()]
+    if not all_periods:
+        fail("MVs vacías — sin periodos"); return
+    # Testear primer, medio y último periodo
+    sample = [all_periods[0]]
+    if len(all_periods) > 2: sample.append(all_periods[len(all_periods)//2])
+    if len(all_periods) > 1: sample.append(all_periods[-1])
+    ok(f"Periodos en MVs: {len(all_periods)} ({all_periods[0]} → {all_periods[-1]})")
 
-    # 3-5. Consistencia si las tablas existen
-    if mv_count > 0:
-        # mv_resumen personas vs raw COUNT(DISTINCT)
-        try:
-            cur.execute("SELECT DISTINCT periodo_mes FROM mv_resumen ORDER BY periodo_mes LIMIT 3")
-            periods = [r[0] for r in cur.fetchall()]
-            check_ok = True
-            for periodo in periods:
-                cur.execute("SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes=%s", (periodo,))
-                mv_total = cur.fetchone()[0] or 0
-                cur.execute("""SELECT COUNT(DISTINCT beneficiary_id)
-                                     + COUNT(*) FILTER (WHERE beneficiary_id IS NULL)
-                              FROM benefits
-                              WHERE periodo_mes=%s""", (periodo,))
-                real_total = cur.fetchone()[0]
-                if abs(mv_total - real_total) > 0:
-                    check_ok = False
-                    print(f"  ✗ mv_resumen personas vs raw: MISMATCH periodo {periodo} (mv={mv_total}, raw={real_total})")
-                    break
-            if check_ok:
-                print(f"  ✓ mv_resumen personas vs raw: OK ({len(periods)} periodos)")
-                passed += 1
-            else:
-                failed += 1
-        except Exception:
-            print(f"  ⚠ mv_resumen check: skip")
-            skipped += 1
-            conn.rollback()
-
-        # Cross-table consistency: beneficios/montos match between mv_cross and mv_resumen
-        try:
-            cur.execute("""SELECT c.periodo_mes, c.beneficios, r.beneficios
-                          FROM (SELECT periodo_mes, SUM(beneficios) AS beneficios FROM mv_cross GROUP BY periodo_mes) c
-                          JOIN (SELECT periodo_mes, SUM(beneficios) AS beneficios FROM mv_resumen GROUP BY periodo_mes) r
-                          ON c.periodo_mes = r.periodo_mes LIMIT 3""")
-            rows = cur.fetchall()
-            if rows and all(r[1] == r[2] for r in rows):
-                print(f"  ✓ Cross-table beneficios: OK")
-                passed += 1
-            elif rows:
-                print(f"  ✗ Cross-table beneficios: MISMATCH")
-                failed += 1
-            else:
-                skipped += 1
-        except Exception:
-            skipped += 1
-            conn.rollback()
-
-        # Concentración: sum of personas by cant_prestaciones == total personas
-        try:
-            cur.execute("""SELECT periodo_mes, SUM(personas) FROM mv_resumen GROUP BY periodo_mes LIMIT 3""")
-            for periodo, ptotal in cur.fetchall():
-                cur.execute("""SELECT SUM(personas) FROM mv_resumen
-                              WHERE periodo_mes=%s GROUP BY cant_prestaciones""", (periodo,))
-                parts_sum = sum(r[0] for r in cur.fetchall())
-                if ptotal != parts_sum:
-                    print(f"  ✗ Concentración sums: MISMATCH")
-                    failed += 1
-                    break
-            else:
-                print(f"  ✓ Concentración sums: OK")
-                passed += 1
-        except Exception:
-            skipped += 1
-            conn.rollback()
-
-    # 6. API check
+    # ── 3. Personas: mv_resumen vs raw COUNT(DISTINCT) ──
     try:
-        import requests as req
-        r = req.get("http://localhost:5000/api/health/api", timeout=3)
-        if r.status_code == 200:
-            data = r.json()
-            print(f"  ✓ API health: {data.get('status', 'unknown')}")
-            passed += 1
+        errs = []
+        for p in sample:
+            cur.execute("SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes=%s", (p,))
+            mv_p = cur.fetchone()[0] or 0
+            cur.execute("""SELECT COUNT(DISTINCT beneficiary_id)
+                                 + COUNT(*) FILTER (WHERE beneficiary_id IS NULL)
+                          FROM benefits WHERE periodo_mes=%s""", (p,))
+            raw_p = cur.fetchone()[0] or 0
+            if mv_p != raw_p:
+                errs.append(f"{p}: mv={mv_p:,} raw={raw_p:,}")
+        if errs:
+            fail(f"Personas mv_resumen vs raw: MISMATCH — {'; '.join(errs)}")
         else:
-            print(f"  ⚠ API check: status {r.status_code}")
-            skipped += 1
-    except Exception:
-        print(f"  ⚠ API check: dashboard no corriendo (skip)")
-        skipped += 1
+            ok(f"Personas mv_resumen vs raw: OK ({len(sample)} periodos)")
+    except Exception as e:
+        skip(f"Personas mv_resumen vs raw: {e}"); conn.rollback()
 
+    # ── 4. Beneficios: mv_resumen vs raw COUNT(*) ──
+    try:
+        errs = []
+        for p in sample:
+            cur.execute("SELECT SUM(beneficios) FROM mv_resumen WHERE periodo_mes=%s", (p,))
+            mv_b = cur.fetchone()[0] or 0
+            cur.execute("SELECT COUNT(*) FROM benefits WHERE periodo_mes=%s", (p,))
+            raw_b = cur.fetchone()[0] or 0
+            if mv_b != raw_b:
+                errs.append(f"{p}: mv={mv_b:,} raw={raw_b:,}")
+        if errs:
+            fail(f"Beneficios mv_resumen vs raw: MISMATCH — {'; '.join(errs)}")
+        else:
+            ok(f"Beneficios mv_resumen vs raw: OK ({len(sample)} periodos)")
+    except Exception as e:
+        skip(f"Beneficios mv_resumen vs raw: {e}"); conn.rollback()
+
+    # ── 5. Montos: mv_resumen vs raw SUM(payments) ──
+    try:
+        errs = []
+        for p in sample:
+            cur.execute("SELECT SUM(montos) FROM mv_resumen WHERE periodo_mes=%s", (p,))
+            mv_m = float(cur.fetchone()[0] or 0)
+            cur.execute("SELECT COALESCE(SUM(monto_prestacion),0) FROM payments WHERE periodo_mes=%s", (p,))
+            raw_m = float(cur.fetchone()[0] or 0)
+            if abs(mv_m - raw_m) > 0.01:
+                errs.append(f"{p}: mv={mv_m:,.2f} raw={raw_m:,.2f}")
+        if errs:
+            fail(f"Montos mv_resumen vs raw: MISMATCH — {'; '.join(errs)}")
+        else:
+            ok(f"Montos mv_resumen vs raw: OK ({len(sample)} periodos)")
+    except Exception as e:
+        skip(f"Montos mv_resumen vs raw: {e}"); conn.rollback()
+
+    # ── 6. Cross-table: mv_cross vs mv_resumen (personas, beneficios, montos) ──
+    try:
+        cur.execute("""
+            SELECT c.periodo_mes,
+                   c.personas, r.personas, c.beneficios, r.beneficios, c.montos, r.montos
+            FROM (SELECT periodo_mes, SUM(personas) AS personas, SUM(beneficios) AS beneficios,
+                         SUM(montos) AS montos FROM mv_cross GROUP BY periodo_mes) c
+            JOIN (SELECT periodo_mes, SUM(personas) AS personas, SUM(beneficios) AS beneficios,
+                         SUM(montos) AS montos FROM mv_resumen GROUP BY periodo_mes) r
+            ON c.periodo_mes = r.periodo_mes
+        """)
+        rows = cur.fetchall()
+        errs = []
+        for r in rows:
+            pm, cp, rp, cb, rb, cm, rm = r
+            if cb != rb:
+                errs.append(f"{pm}: beneficios cross={cb:,} res={rb:,}")
+            if abs(float(cm or 0) - float(rm or 0)) > 0.01:
+                errs.append(f"{pm}: montos cross={cm} res={rm}")
+            # personas: cross cuenta filas por programa, resumen deduplica — no deben coincidir
+        if errs:
+            fail(f"Cross vs Resumen: MISMATCH — {'; '.join(errs[:3])}")
+        else:
+            ok(f"Cross vs Resumen: beneficios y montos coinciden ({len(rows)} periodos)")
+    except Exception as e:
+        skip(f"Cross vs Resumen: {e}"); conn.rollback()
+
+    # ── 7. Concentración: partes == total personas ──
+    try:
+        cur.execute("SELECT periodo_mes, SUM(personas) AS t FROM mv_resumen GROUP BY periodo_mes")
+        period_totals = {r[0]: r[1] for r in cur.fetchall()}
+        errs = []
+        for p in sample:
+            cur.execute("""SELECT cant_prestaciones, SUM(personas) FROM mv_resumen
+                          WHERE periodo_mes=%s GROUP BY cant_prestaciones""", (p,))
+            parts = sum(r[1] for r in cur.fetchall())
+            if parts != period_totals.get(p, 0):
+                errs.append(f"{p}: partes={parts:,} total={period_totals[p]:,}")
+        if errs:
+            fail(f"Concentración (partes=total): MISMATCH — {'; '.join(errs)}")
+        else:
+            ok(f"Concentración (partes=total): OK ({len(sample)} periodos)")
+    except Exception as e:
+        skip(f"Concentración: {e}"); conn.rollback()
+
+    # ── 8. Dimensiones: provincia, sexo, grupo_etario suman al total ──
+    try:
+        errs = []
+        p = sample[-1]  # último periodo
+        cur.execute("SELECT SUM(personas), SUM(beneficios), SUM(montos) FROM mv_resumen WHERE periodo_mes=%s", (p,))
+        total_p, total_b, total_m = cur.fetchone()
+        for dim in ('provincia', 'sexo', 'grupo_etario'):
+            cur.execute(f"SELECT SUM(personas), SUM(beneficios), SUM(montos) FROM mv_resumen WHERE periodo_mes=%s GROUP BY {dim}", (p,))
+            rows = cur.fetchall()
+            dp = sum(r[0] for r in rows)
+            db = sum(r[1] for r in rows)
+            dm = sum(r[2] for r in rows)
+            if dp != total_p:
+                errs.append(f"{dim}.personas: {dp:,} != {total_p:,}")
+            if db != total_b:
+                errs.append(f"{dim}.beneficios: {db:,} != {total_b:,}")
+            if abs(float(dm) - float(total_m)) > 0.01:
+                errs.append(f"{dim}.montos: {dm} != {total_m}")
+        if errs:
+            fail(f"Dimensiones suman al total ({p}): MISMATCH — {'; '.join(errs)}")
+        else:
+            ok(f"Dimensiones suman al total ({p}): provincia/sexo/grupo_etario OK")
+    except Exception as e:
+        skip(f"Dimensiones: {e}"); conn.rollback()
+
+    # ── 9. mv_cross: programa+secretaria cubren todas las filas ──
+    try:
+        p = sample[-1]
+        cur.execute("SELECT SUM(beneficios) FROM mv_cross WHERE periodo_mes=%s", (p,))
+        cross_total = cur.fetchone()[0] or 0
+        cur.execute("""SELECT SUM(beneficios) FROM mv_cross
+                      WHERE periodo_mes=%s GROUP BY nombre_programa, secretaria_origen""", (p,))
+        parts = sum(r[0] for r in cur.fetchall())
+        if cross_total != parts:
+            fail(f"mv_cross programa×secretaria ({p}): {parts:,} != {cross_total:,}")
+        else:
+            ok(f"mv_cross programa×secretaria ({p}): OK ({cross_total:,} beneficios)")
+    except Exception as e:
+        skip(f"mv_cross programa×secretaria: {e}"); conn.rollback()
+
+    # ── 10. Periodos: MVs cubren mismos periodos que benefits ──
+    try:
+        cur.execute("SELECT DISTINCT periodo_mes FROM benefits ORDER BY periodo_mes")
+        raw_periods = set(r[0] for r in cur.fetchall())
+        mv_periods = set(all_periods)
+        missing = raw_periods - mv_periods
+        extra = mv_periods - raw_periods
+        if missing:
+            fail(f"Periodos faltantes en MVs: {sorted(missing)}")
+        elif extra:
+            fail(f"Periodos en MVs sin datos raw: {sorted(extra)}")
+        else:
+            ok(f"Cobertura de periodos: {len(mv_periods)} periodos, MVs = raw")
+    except Exception as e:
+        skip(f"Cobertura de periodos: {e}"); conn.rollback()
+
+    # ── Parte 2: MVs ↔ API endpoints (Flask test client, sin server externo) ──
+    print("\n  ── MVs ↔ API ──")
+    try:
+        from app import app as flask_app
+        flask_app.config["TESTING"] = True
+        flask_app.config["WTF_CSRF_ENABLED"] = False
+        client = flask_app.test_client()
+        # Login
+        client.post("/login", data={"email": "admin@demo.local", "password": "Demo123!"})
+    except Exception as e:
+        skip(f"Flask test client: {e}")
+        total = passed + failed + skipped
+        print(f"\n  {passed}/{total} checks passed, {failed} failed, {skipped} skipped")
+        return
+
+    p = sample[-1]
+
+    # ── 11. Summary: personas, montos, concentración vs MV ──
+    try:
+        r = client.get(f"/api/indicators/summary?period={p}&metric=personas")
+        if r.status_code != 200:
+            raise Exception(f"status {r.status_code}")
+        api = r.get_json()
+        cur.execute("SELECT SUM(personas), SUM(beneficios), SUM(montos) FROM mv_resumen WHERE periodo_mes=%s", (p,))
+        mv_row = cur.fetchone()
+        mv_personas, mv_benef, mv_montos = int(mv_row[0] or 0), int(mv_row[1] or 0), round(float(mv_row[1 + 1] or 0))
+        errs = []
+        if api["cobertura"] != mv_personas:
+            errs.append(f"personas: api={api['cobertura']:,} mv={mv_personas:,}")
+        if abs(api["montoTotal"] - mv_montos) > 1:
+            errs.append(f"montos: api={api['montoTotal']:,} mv={mv_montos:,}")
+        # concentración partes == cobertura
+        conc = api.get("concentracion", {})
+        conc_sum = conc.get("conUna", 0) + conc.get("conDos", 0) + conc.get("conTresMas", 0)
+        if conc_sum != api["cobertura"]:
+            errs.append(f"concentración: {conc_sum:,} != cobertura {api['cobertura']:,}")
+        if errs:
+            fail(f"API summary ({p}): {'; '.join(errs)}")
+        else:
+            ok(f"API summary ({p}): personas={mv_personas:,} montos={mv_montos:,} concentración OK")
+    except Exception as e:
+        skip(f"API summary: {e}")
+
+    # ── 12. by-programa: sum(personas) == mv_cross total ──
+    try:
+        errs = []
+        for metric in ("personas", "beneficios", "montos"):
+            r = client.get(f"/api/indicators/by-programa?period={p}&metric={metric}")
+            if r.status_code != 200:
+                raise Exception(f"by-programa metric={metric} status {r.status_code}")
+            api_total = sum(x["total"] for x in r.get_json())
+            col = {"personas": "personas", "beneficios": "beneficios", "montos": "montos"}[metric]
+            cur.execute(f"SELECT SUM({col}) FROM mv_cross WHERE periodo_mes=%s", (p,))
+            mv_val = cur.fetchone()[0] or 0
+            mv_val = int(mv_val) if metric != "montos" else round(float(mv_val))
+            api_val = int(api_total) if metric != "montos" else round(float(api_total))
+            if abs(api_val - mv_val) > 1:
+                errs.append(f"{metric}: api={api_val:,} mv={mv_val:,}")
+        if errs:
+            fail(f"API by-programa ({p}): {'; '.join(errs)}")
+        else:
+            ok(f"API by-programa ({p}): 3 métricas OK")
+    except Exception as e:
+        skip(f"API by-programa: {e}")
+
+    # ── 13. by-secretaria: sum(personas) coincide con mv_cross ──
+    try:
+        errs = []
+        for metric in ("personas", "beneficios", "montos"):
+            r = client.get(f"/api/indicators/by-secretaria?period={p}&metric={metric}")
+            if r.status_code != 200:
+                raise Exception(f"status {r.status_code}")
+            api_total = sum(x["total"] for x in r.get_json())
+            col = metric
+            cur.execute(f"SELECT SUM({col}) FROM mv_cross WHERE periodo_mes=%s", (p,))
+            mv_val = cur.fetchone()[0] or 0
+            mv_val = int(mv_val) if metric != "montos" else round(float(mv_val))
+            api_val = int(api_total) if metric != "montos" else round(float(api_total))
+            if abs(api_val - mv_val) > 1:
+                errs.append(f"{metric}: api={api_val:,} mv={mv_val:,}")
+        if errs:
+            fail(f"API by-secretaria ({p}): {'; '.join(errs)}")
+        else:
+            ok(f"API by-secretaria ({p}): 3 métricas OK")
+    except Exception as e:
+        skip(f"API by-secretaria: {e}")
+
+    # ── 14. by-provincia: 3 métricas vs mv_resumen ──
+    try:
+        errs = []
+        for metric in ("personas", "beneficios", "montos"):
+            r = client.get(f"/api/indicators/by-provincia?period={p}&metric={metric}")
+            if r.status_code != 200:
+                raise Exception(f"status {r.status_code}")
+            api_total = sum(x["total"] for x in r.get_json())
+            cur.execute(f"SELECT SUM({metric}) FROM mv_resumen WHERE periodo_mes=%s", (p,))
+            mv_val = cur.fetchone()[0] or 0
+            mv_val = int(mv_val) if metric != "montos" else round(float(mv_val))
+            api_val = int(api_total) if metric != "montos" else round(float(api_total))
+            if abs(api_val - mv_val) > 1:
+                errs.append(f"{metric}: api={api_val:,} mv={mv_val:,}")
+        if errs:
+            fail(f"API by-provincia ({p}): {'; '.join(errs)}")
+        else:
+            ok(f"API by-provincia ({p}): 3 métricas OK")
+    except Exception as e:
+        skip(f"API by-provincia: {e}")
+
+    # ── 15. by-sexo + by-grupo-etario: personas vs mv_resumen ──
+    try:
+        errs = []
+        for endpoint, col in [("by-sexo", "personas"), ("by-grupo-etario", "personas")]:
+            r = client.get(f"/api/indicators/{endpoint}?period={p}&metric=personas")
+            if r.status_code != 200:
+                raise Exception(f"{endpoint} status {r.status_code}")
+            api_total = sum(x["total"] for x in r.get_json())
+            cur.execute(f"SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes=%s", (p,))
+            mv_val = int(cur.fetchone()[0] or 0)
+            if api_total != mv_val:
+                errs.append(f"{endpoint}: api={api_total:,} mv={mv_val:,}")
+        if errs:
+            fail(f"API sexo+etario ({p}): {'; '.join(errs)}")
+        else:
+            ok(f"API by-sexo + by-grupo-etario ({p}): personas OK")
+    except Exception as e:
+        skip(f"API sexo+etario: {e}")
+
+    # ── 16. Evolución: cubre todos los periodos, totales coherentes ──
+    try:
+        r = client.get(f"/api/indicators/evolucion?metric=personas")
+        if r.status_code != 200:
+            raise Exception(f"status {r.status_code}")
+        evo = r.get_json()
+        evo_periods = {x["periodo_mes"] for x in evo}
+        errs = []
+        missing = set(all_periods) - evo_periods
+        if missing:
+            errs.append(f"faltan periodos: {sorted(missing)}")
+        # Spot-check: último periodo total vs mv_resumen
+        evo_last = next((x for x in evo if x["periodo_mes"] == p), None)
+        if evo_last:
+            cur.execute("SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes=%s", (p,))
+            mv_val = int(cur.fetchone()[0] or 0)
+            if evo_last["total"] != mv_val:
+                errs.append(f"{p}: api={evo_last['total']:,} mv={mv_val:,}")
+        if errs:
+            fail(f"API evolución: {'; '.join(errs)}")
+        else:
+            ok(f"API evolución: {len(evo_periods)} periodos, totales OK")
+    except Exception as e:
+        skip(f"API evolución: {e}")
+
+    total = passed + failed + skipped
     print(f"\n  {passed}/{total} checks passed, {failed} failed, {skipped} skipped")
 
 

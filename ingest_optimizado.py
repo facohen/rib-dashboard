@@ -759,10 +759,10 @@ def _clear_cache():
 def _matviews_exist(conn):
     cur = conn.cursor()
     cur.execute("""SELECT COUNT(*) FROM information_schema.tables
-                   WHERE table_schema='public' AND table_name IN ('mv_cross','mv_resumen')""")
+                   WHERE table_schema='public' AND table_name IN ('mv_cross','mv_resumen','mv_nominal')""")
     n = cur.fetchone()[0]
     cur.close()
-    return n == 2
+    return n >= 2
 
 
 # Backward compat: create_matviews.py y refresh_matviews.py siguen funcionando
@@ -826,7 +826,7 @@ def _do_generate_matviews(conn):
 def _do_status(conn):
     db_summary(conn)
     cur = conn.cursor()
-    for name in ["mv_cross", "mv_resumen"]:
+    for name in ["mv_cross", "mv_resumen", "mv_nominal"]:
         cur.execute("""SELECT 1 FROM information_schema.tables
                        WHERE table_schema='public' AND table_name=%s""", (name,))
         if cur.fetchone():

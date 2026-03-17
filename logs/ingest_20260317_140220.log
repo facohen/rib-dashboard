@@ -1,0 +1,44 @@
+14:02:20 
+==================================================
+  RUB -- Pipeline de Datos
+  DB: localhost/rub
+==================================================
+14:02:33   Tablas truncadas.
+14:02:41 
+  Estado de la base de datos:
+14:02:41   programs                             0
+14:02:41   beneficiaries                        0
+14:02:41   benefits                             0
+14:02:41   payments                             0
+14:02:41   incompatibility_rules                0
+14:02:41   users                                2
+14:02:41   secretarias                          0
+14:02:41     mv_cross: 159,072 filas
+14:02:41     mv_resumen: 19,884 filas
+14:02:41     mv_nominal: no existe
+14:04:50 
+  Estado de la base de datos:
+14:04:50   programs                             8
+14:04:50   beneficiaries                  100,000
+14:04:50   benefits                     2,005,836
+14:04:50   payments                     1,790,039
+14:04:50   incompatibility_rules                4
+14:04:50   users                                2
+14:04:50   secretarias                          3
+14:04:50 
+  Periodos (12):
+14:04:50     2025-04: 167,153
+14:04:50     2025-05: 167,153
+14:04:50     2025-06: 167,153
+14:04:50     2025-07: 167,153
+14:04:50     2025-08: 167,153
+14:04:50     2025-09: 167,153
+14:04:50     2025-10: 167,153
+14:04:50     2025-11: 167,153
+14:04:50     2025-12: 167,153
+14:04:50     2026-01: 167,153
+14:04:50     2026-02: 167,153
+14:04:50     2026-03: 167,153
+14:04:50     mv_cross: 159,072 filas
+14:04:50     mv_resumen: 19,884 filas
+14:04:50     mv_nominal: no existe

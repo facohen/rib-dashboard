@@ -179,9 +179,13 @@ def api_nominal_list():
     page_size = int(request.args.get("pageSize", 20))
     return jsonify(queries.get_nominal_list(get_db(), period, filters, page, page_size))
 
-@app.route("/api/nominal/beneficiaries/<int:bid>")
+@app.route("/api/nominal/beneficiaries/<bid>")
 @admin_required
 def api_nominal_detail(bid):
+    try:
+        bid = int(bid)
+    except (ValueError, TypeError):
+        return jsonify(error="ID inválido"), 400
     period = request.args.get("period", "2026-03")
     detail = queries.get_nominal_detail(get_db(), bid, period)
     if not detail:

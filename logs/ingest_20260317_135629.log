@@ -1,0 +1,68 @@
+13:56:29 
+=======================================================
+13:56:29   RUB — Ingesta de Datasets
+13:56:29   DB: localhost/rub
+13:56:29   Log: /Users/fede/repos/rub-dashboard/logs/ingest_20260317_135629.log
+13:56:29 =======================================================
+13:56:37 
+  Estado actual de la base de datos:
+13:56:37   Tabla                        Registros
+13:56:37   ------------------------- ------------
+13:56:37   programs                             8
+13:56:37   beneficiaries                8,000,000
+13:56:51   benefits                   160,734,588
+13:57:12   payments                   143,459,108
+13:57:12   incompatibility_rules                4
+13:57:12   users                                2
+13:57:12   secretarias                          3
+13:57:29 
+  Periodos (12):
+13:57:29     2025-04: 13,394,549 benefits
+13:57:29     2025-05: 13,394,549 benefits
+13:57:29     2025-06: 13,394,549 benefits
+13:57:29     2025-07: 13,394,549 benefits
+13:57:29     2025-08: 13,394,549 benefits
+13:57:29     2025-09: 13,394,549 benefits
+13:57:29     2025-10: 13,394,549 benefits
+13:57:29     2025-11: 13,394,549 benefits
+13:57:29     2025-12: 13,394,549 benefits
+13:57:29     2026-01: 13,394,549 benefits
+13:57:29     2026-02: 13,394,549 benefits
+13:57:29     2026-03: 13,394,549 benefits
+13:57:39 
+  Estado actual de la base de datos:
+13:57:39   Tabla                        Registros
+13:57:39   ------------------------- ------------
+13:57:39   programs                             8
+13:57:39   beneficiaries                8,000,000
+13:57:52   benefits                   160,734,588
+13:58:13   payments                   143,459,108
+13:58:13   incompatibility_rules                4
+13:58:13   users                                2
+13:58:13   secretarias                          3
+13:58:28 
+  Periodos (12):
+13:58:28     2025-04: 13,394,549 benefits
+13:58:28     2025-05: 13,394,549 benefits
+13:58:28     2025-06: 13,394,549 benefits
+13:58:28     2025-07: 13,394,549 benefits
+13:58:28     2025-08: 13,394,549 benefits
+13:58:28     2025-09: 13,394,549 benefits
+13:58:28     2025-10: 13,394,549 benefits
+13:58:28     2025-11: 13,394,549 benefits
+13:58:28     2025-12: 13,394,549 benefits
+13:58:28     2026-01: 13,394,549 benefits
+13:58:28     2026-02: 13,394,549 benefits
+13:58:28     2026-03: 13,394,549 benefits
+13:58:39   Tablas de datos truncadas.
+13:58:40 
+  Estado actual de la base de datos:
+13:58:40   Tabla                        Registros
+13:58:40   ------------------------- ------------
+13:58:40   programs                             0
+13:58:40   beneficiaries                        0
+13:58:40   benefits                             0
+13:58:40   payments                             0
+13:58:40   incompatibility_rules                0
+13:58:40   users                                2
+13:58:40   secretarias                          0
