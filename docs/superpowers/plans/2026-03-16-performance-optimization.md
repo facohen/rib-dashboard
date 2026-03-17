@@ -160,7 +160,7 @@ per_person → GROUP BY para deduplicar personas
 - [ ] Correr `python create_matviews.py` para medir tiempo real (estimado: ~20-30 min vs ~60 min anterior)
 - [ ] Verificar consistencia: `ingest.py` opción `[C]` (check DB ↔ MVs ↔ API)
 - [ ] Verificar dashboard funciona sin queries raw
-- [ ] Commit cambios de Fase 2
+- [ ] Commit cambios de Fase 2+3
 - [ ] Eliminar índices innecesarios de la DB live (los que sacamos de seed_pg.py)
 
 ### Para eliminar índices viejos de la DB live:
@@ -174,3 +174,78 @@ DROP INDEX IF EXISTS idx_ben_sexo;
 DROP INDEX IF EXISTS idx_ben_fecha_nacimiento;
 -- Libera ~20GB de espacio en disco
 ```
+
+---
+
+### Fase 3: Temp table compartida + covering index (2026-03-17) 🔧 PENDIENTE COMMIT
+
+#### 3a. Temp table compartida en `create_matviews.py`
+- **Antes:** Cada MV (mv_cross, mv_resumen) tenía su propia INSERT SQL con queries independientes → 2 scans completos de benefits/payments/beneficiaries por periodo
+- **Después:** Una sola temp table `_pp` por periodo agrupa a nivel persona con todas las dimensiones. Luego:
+  - `INSERT_CROSS_FROM_PP`: re-agrega `_pp` → mv_cross (solo lee temp table, ~instantáneo)
+  - `INSERT_RESUMEN_FROM_PP`: deduplica personas y re-agrega → mv_resumen
+  - `NULL_CROSS_SQL` / `NULL_RESUMEN_SQL`: inserta no-identificados (beneficiary_id IS NULL)
+- **Beneficio:** Reduce scans de tablas raw a la mitad — 1 scan por periodo en vez de 2
+- **Implementación:** `_process_period(cur, conn, period, cross_table, resumen_table)` encapsula todo el flujo
+
+#### 3b. `refresh_matviews.py` adaptado a temp table compartida
+- **Antes:** Iteraba por cada entrada en TABLES separadamente, cada una con su INSERT SQL propia
+- **Después:** Importa `_apply_tuning` y `_process_period` de `create_matviews`. Crea ambas shadow tables vacías, luego procesa periodos con `_process_period(cur, conn, p, cross_table="mv_cross_new", resumen_table="mv_resumen_new")`
+- **Beneficio:** Código DRY — misma lógica en create y refresh. Misma optimización de 1 scan por periodo.
+
+#### 3c. Covering index en payments (`seed_pg.py`)
+```sql
+-- Antes (2 índices):
+CREATE INDEX idx_payments_period ON payments(periodo_mes);
+CREATE INDEX idx_payments_compound ON payments(beneficiary_id, program_id, periodo_mes);
+
+-- Después (1 covering index):
+CREATE INDEX idx_payments_covering ON payments(periodo_mes, beneficiary_id, program_id) INCLUDE (monto_prestacion);
+```
+- **Beneficio:** Un solo índice cubre tanto el filtro `WHERE periodo_mes = %s` como el `GROUP BY beneficiary_id, program_id, periodo_mes` con `SUM(monto_prestacion)` → **Index Only Scan** en el subquery de payments dentro de `_pp`
+- **Ahorro:** Elimina un índice (~4-5GB menos en disco)
+
+### Fase 4: Query optimization + covering indexes en MVs (2026-03-17) 🔧 PENDIENTE COMMIT
+
+#### 4a. Eliminar CROSS JOIN LATERAL para cálculo de edad
+- **Antes:** Cada fila (~16M por periodo) hacía `SUBSTRING + concatenación + ::date + AGE()` para construir la fecha del periodo
+- **Después:** `period_date` se precalcula en Python y se pasa como parámetro `%s::date`
+- **Impacto:** Elimina ~16M operaciones de string parsing por periodo (192M en total)
+
+#### 4b. Integrar beneficiary_id IS NULL en la query principal
+- **Antes:** 4 queries separadas (`NULL_CROSS_SQL`, `NULL_RESUMEN_SQL`) escaneaban benefits de nuevo para no-identificados → 2 scans extra por periodo = 24 scans adicionales
+- **Después:** `LEFT JOIN beneficiaries` + `COALESCE(provincia, 'Sin dato')` integra NULLs en una sola query
+- **Impacto:** Elimina `NULL_CROSS_SQL` y `NULL_RESUMEN_SQL` por completo. `_process_period` pasa de 10 líneas a 6.
+
+#### 4c. Tuning de sesión más agresivo
+- `work_mem`: 1GB → 2GB (evitar spill a disco en sorts/hashes)
+- `maintenance_work_mem`: 2GB → 4GB (index builds más rápidos)
+- Se mantiene `SET` (no `SET LOCAL`) porque `_process_period` hace commit por periodo
+
+#### 4d. Covering indexes en MVs con INCLUDE
+```sql
+-- Todos los indexes secundarios de mv_cross y mv_resumen ahora incluyen:
+INCLUDE (personas, beneficios, montos)
+```
+- **Beneficio:** Queries del dashboard hacen Index Only Scan en vez de Index Scan + heap lookup
+- **Overhead despreciable:** mv_cross ~180K rows, mv_resumen ~23K rows
+
+---
+
+## Brainstorm: optimizaciones adicionales pendientes
+
+### Paso 5: Paralelismo con ThreadPoolExecutor
+- Procesar múltiples periodos en paralelo (cada uno en su propia conexión)
+- Estimación: 3-4x speedup adicional (12 periodos ÷ 4 workers)
+- Riesgo: presión de memoria — cada worker consume ~1GB de work_mem
+- Requiere: tabla UNLOGGED (sin WAL) para evitar contención de I/O en escritura
+
+### Paso 6: COPY para inserts en MVs
+- Reemplazar `INSERT INTO ... SELECT` por `COPY FROM` con buffer en memoria
+- Evita overhead del executor de PostgreSQL para inserts masivos
+- Complejidad: requiere materializar resultados del SELECT en Python
+
+### Paso 7: Particionamiento de benefits por periodo
+- `CREATE TABLE benefits ... PARTITION BY LIST (periodo_mes)`
+- Beneficio: partition pruning elimina 11/12 particiones en cada query
+- Tradeoff: complejidad operacional en ingesta de datos

@@ -19,14 +19,13 @@ import psycopg2
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost/rub")
 
 # ──────────────────────────────────────────────
-# Table definitions (physical tables, not materialized views)
+# Table DDL + indexes (no INSERT — see shared temp table below)
 # ──────────────────────────────────────────────
 
 TABLES = [
     # ── mv_cross (multidimensional per-program, ~130-180K rows) ──
     (
         "mv_cross",
-        # DDL: create empty UNLOGGED table
         """
         CREATE UNLOGGED TABLE mv_cross (
             periodo_mes TEXT, nombre_programa TEXT, secretaria_origen TEXT,
@@ -34,95 +33,20 @@ TABLES = [
             personas BIGINT, beneficios BIGINT, montos NUMERIC(14,2)
         )
         """,
-        # INSERT for one period (%s x4: bpc, payment subquery, main WHERE, UNION ALL)
-        """
-        INSERT INTO mv_cross
-        WITH base AS (
-            SELECT b.beneficiary_id, b.periodo_mes,
-                   p.nombre_programa, p.secretaria_origen,
-                   ben.provincia, ben.sexo,
-                   CASE
-                     WHEN ben.fecha_nacimiento IS NULL THEN 'Sin dato'
-                     WHEN calc.edad <= 4  THEN '0-4 años'
-                     WHEN calc.edad <= 12 THEN '5-12 años'
-                     WHEN calc.edad <= 17 THEN '13-17 años'
-                     WHEN calc.edad <= 29 THEN '18-29 años'
-                     WHEN calc.edad <= 59 THEN '30-59 años'
-                     ELSE '60+ años'
-                   END AS grupo_etario,
-                   bpc.cant_prog,
-                   COALESCE(pa.total_monto, 0) AS monto
-            FROM benefits b
-            JOIN programs p ON b.program_id = p.id
-            JOIN beneficiaries ben ON b.beneficiary_id = ben.id
-            JOIN (
-                SELECT beneficiary_id, COUNT(DISTINCT program_id) AS cant_prog
-                FROM benefits
-                WHERE periodo_mes = %s AND beneficiary_id IS NOT NULL
-                GROUP BY beneficiary_id
-            ) bpc ON bpc.beneficiary_id = b.beneficiary_id
-            LEFT JOIN (
-                SELECT beneficiary_id, program_id, periodo_mes,
-                       SUM(monto_prestacion) AS total_monto
-                FROM payments WHERE periodo_mes = %s
-                GROUP BY beneficiary_id, program_id, periodo_mes
-            ) pa ON pa.beneficiary_id = b.beneficiary_id
-                AND pa.program_id = b.program_id AND pa.periodo_mes = b.periodo_mes
-            CROSS JOIN LATERAL (
-                SELECT EXTRACT(YEAR FROM AGE(
-                    (SUBSTRING(b.periodo_mes FROM 1 FOR 4) || '-' ||
-                     SUBSTRING(b.periodo_mes FROM 6 FOR 2) || '-01')::date,
-                    ben.fecha_nacimiento
-                ))::int AS edad
-            ) calc
-            WHERE b.periodo_mes = %s AND b.beneficiary_id IS NOT NULL
-        ),
-        per_person AS (
-            SELECT periodo_mes, nombre_programa, secretaria_origen,
-                   provincia, sexo, grupo_etario,
-                   CASE WHEN cant_prog = 1 THEN '1' WHEN cant_prog = 2 THEN '2' ELSE '3+' END AS cant_prestaciones,
-                   beneficiary_id,
-                   COUNT(*) AS cant_benefits,
-                   SUM(monto) AS person_monto
-            FROM base
-            GROUP BY periodo_mes, nombre_programa, secretaria_origen,
-                     provincia, sexo, grupo_etario,
-                     CASE WHEN cant_prog = 1 THEN '1' WHEN cant_prog = 2 THEN '2' ELSE '3+' END,
-                     beneficiary_id
-        )
-        SELECT periodo_mes, nombre_programa, secretaria_origen,
-               provincia, sexo, grupo_etario, cant_prestaciones,
-               COUNT(*) AS personas,
-               SUM(cant_benefits) AS beneficios,
-               SUM(person_monto) AS montos
-        FROM per_person
-        GROUP BY periodo_mes, nombre_programa, secretaria_origen,
-                 provincia, sexo, grupo_etario, cant_prestaciones
-        UNION ALL
-        SELECT b.periodo_mes, p.nombre_programa, p.secretaria_origen,
-               'Sin dato' AS provincia, 'Sin dato' AS sexo,
-               'Sin dato' AS grupo_etario, '1' AS cant_prestaciones,
-               COUNT(*) AS personas, COUNT(*) AS beneficios,
-               CAST(0 AS NUMERIC(14,2)) AS montos
-        FROM benefits b
-        JOIN programs p ON b.program_id = p.id
-        WHERE b.beneficiary_id IS NULL AND b.periodo_mes = %s
-        GROUP BY b.periodo_mes, p.nombre_programa, p.secretaria_origen
-        """,
+        None,  # INSERT handled by shared temp table
         [
             "CREATE UNIQUE INDEX ON mv_cross(periodo_mes, nombre_programa, secretaria_origen, provincia, sexo, grupo_etario, cant_prestaciones)",
-            "CREATE INDEX ON mv_cross(periodo_mes)",
-            "CREATE INDEX ON mv_cross(periodo_mes, nombre_programa)",
-            "CREATE INDEX ON mv_cross(periodo_mes, provincia)",
-            "CREATE INDEX ON mv_cross(periodo_mes, secretaria_origen)",
-            "CREATE INDEX ON mv_cross(periodo_mes, cant_prestaciones)",
+            "CREATE INDEX ON mv_cross(periodo_mes) INCLUDE (personas, beneficios, montos)",
+            "CREATE INDEX ON mv_cross(periodo_mes, nombre_programa) INCLUDE (personas, beneficios, montos)",
+            "CREATE INDEX ON mv_cross(periodo_mes, provincia) INCLUDE (personas, beneficios, montos)",
+            "CREATE INDEX ON mv_cross(periodo_mes, secretaria_origen) INCLUDE (personas, beneficios, montos)",
+            "CREATE INDEX ON mv_cross(periodo_mes, cant_prestaciones) INCLUDE (personas, beneficios, montos)",
         ],
     ),
 
     # ── mv_resumen (deduplicated persons, ~23K rows) ──
     (
         "mv_resumen",
-        # DDL: create empty UNLOGGED table
         """
         CREATE UNLOGGED TABLE mv_resumen (
             periodo_mes TEXT, provincia TEXT, sexo TEXT,
@@ -130,81 +54,105 @@ TABLES = [
             personas BIGINT, beneficios BIGINT, montos NUMERIC(14,2)
         )
         """,
-        # INSERT for one period (%s x4: bpc, payment subquery, main WHERE, UNION ALL)
-        """
-        INSERT INTO mv_resumen
-        WITH base AS (
-            SELECT b.beneficiary_id, b.periodo_mes,
-                   ben.provincia, ben.sexo,
-                   CASE
-                     WHEN ben.fecha_nacimiento IS NULL THEN 'Sin dato'
-                     WHEN calc.edad <= 4  THEN '0-4 años'
-                     WHEN calc.edad <= 12 THEN '5-12 años'
-                     WHEN calc.edad <= 17 THEN '13-17 años'
-                     WHEN calc.edad <= 29 THEN '18-29 años'
-                     WHEN calc.edad <= 59 THEN '30-59 años'
-                     ELSE '60+ años'
-                   END AS grupo_etario,
-                   bpc.cant_prog,
-                   COALESCE(pa.total_monto, 0) AS monto
-            FROM benefits b
-            JOIN programs p ON b.program_id = p.id
-            JOIN beneficiaries ben ON b.beneficiary_id = ben.id
-            JOIN (
-                SELECT beneficiary_id, COUNT(DISTINCT program_id) AS cant_prog
-                FROM benefits
-                WHERE periodo_mes = %s AND beneficiary_id IS NOT NULL
-                GROUP BY beneficiary_id
-            ) bpc ON bpc.beneficiary_id = b.beneficiary_id
-            LEFT JOIN (
-                SELECT beneficiary_id, program_id, periodo_mes,
-                       SUM(monto_prestacion) AS total_monto
-                FROM payments WHERE periodo_mes = %s
-                GROUP BY beneficiary_id, program_id, periodo_mes
-            ) pa ON pa.beneficiary_id = b.beneficiary_id
-                AND pa.program_id = b.program_id AND pa.periodo_mes = b.periodo_mes
-            CROSS JOIN LATERAL (
-                SELECT EXTRACT(YEAR FROM AGE(
-                    (SUBSTRING(b.periodo_mes FROM 1 FOR 4) || '-' ||
-                     SUBSTRING(b.periodo_mes FROM 6 FOR 2) || '-01')::date,
-                    ben.fecha_nacimiento
-                ))::int AS edad
-            ) calc
-            WHERE b.periodo_mes = %s AND b.beneficiary_id IS NOT NULL
-        ),
-        per_person AS (
-            SELECT periodo_mes, provincia, sexo, grupo_etario,
-                   CASE WHEN cant_prog = 1 THEN '1' WHEN cant_prog = 2 THEN '2' ELSE '3+' END AS cant_prestaciones,
-                   beneficiary_id,
-                   COUNT(*) AS cant_benefits,
-                   SUM(monto) AS person_monto
-            FROM base
-            GROUP BY periodo_mes, provincia, sexo, grupo_etario,
-                     CASE WHEN cant_prog = 1 THEN '1' WHEN cant_prog = 2 THEN '2' ELSE '3+' END,
-                     beneficiary_id
-        )
-        SELECT periodo_mes, provincia, sexo, grupo_etario, cant_prestaciones,
-               COUNT(*) AS personas,
-               SUM(cant_benefits) AS beneficios,
-               SUM(person_monto) AS montos
-        FROM per_person
-        GROUP BY periodo_mes, provincia, sexo, grupo_etario, cant_prestaciones
-        UNION ALL
-        SELECT b.periodo_mes,
-               'Sin dato' AS provincia, 'Sin dato' AS sexo,
-               'Sin dato' AS grupo_etario, '1' AS cant_prestaciones,
-               COUNT(*) AS personas, COUNT(*) AS beneficios,
-               CAST(0 AS NUMERIC(14,2)) AS montos
-        FROM benefits b
-        WHERE b.beneficiary_id IS NULL AND b.periodo_mes = %s
-        GROUP BY b.periodo_mes
-        """,
+        None,  # INSERT handled by shared temp table
         [
             "CREATE UNIQUE INDEX ON mv_resumen(periodo_mes, provincia, sexo, grupo_etario, cant_prestaciones)",
-            "CREATE INDEX ON mv_resumen(periodo_mes)",
+            "CREATE INDEX ON mv_resumen(periodo_mes) INCLUDE (personas, beneficios, montos)",
         ],
     ),
 ]
+
+# ──────────────────────────────────────────────
+# Shared temp table: one scan → both MVs
+# ──────────────────────────────────────────────
+
+# Per-person temp table: single scan of benefits+payments+beneficiaries
+# Groups by all 7 dimensions (mv_cross superset), mv_resumen re-aggregates from here
+# Includes NULL beneficiary_id rows (non-identified) via LEFT JOINs + COALESCE
+# Params: [period, period, period_date, period]
+TEMP_TABLE_SQL = """
+CREATE TEMP TABLE _pp ON COMMIT DROP AS
+WITH base AS (
+    SELECT COALESCE(b.beneficiary_id, -b.id) AS beneficiary_id, b.periodo_mes,
+           p.nombre_programa, p.secretaria_origen,
+           COALESCE(ben.provincia, 'Sin dato') AS provincia,
+           COALESCE(ben.sexo, 'Sin dato') AS sexo,
+           CASE
+             WHEN ben.fecha_nacimiento IS NULL THEN 'Sin dato'
+             WHEN calc.edad <= 4  THEN '0-4 años'
+             WHEN calc.edad <= 12 THEN '5-12 años'
+             WHEN calc.edad <= 17 THEN '13-17 años'
+             WHEN calc.edad <= 29 THEN '18-29 años'
+             WHEN calc.edad <= 59 THEN '30-59 años'
+             ELSE '60+ años'
+           END AS grupo_etario,
+           COALESCE(bpc.cant_prog, 1) AS cant_prog,
+           COALESCE(pa.total_monto, 0) AS monto
+    FROM benefits b
+    JOIN programs p ON b.program_id = p.id
+    LEFT JOIN beneficiaries ben ON b.beneficiary_id = ben.id
+    LEFT JOIN (
+        SELECT beneficiary_id, COUNT(DISTINCT program_id) AS cant_prog
+        FROM benefits
+        WHERE periodo_mes = %s AND beneficiary_id IS NOT NULL
+        GROUP BY beneficiary_id
+    ) bpc ON bpc.beneficiary_id = b.beneficiary_id
+    LEFT JOIN (
+        SELECT beneficiary_id, program_id, periodo_mes,
+               SUM(monto_prestacion) AS total_monto
+        FROM payments WHERE periodo_mes = %s
+        GROUP BY beneficiary_id, program_id, periodo_mes
+    ) pa ON pa.beneficiary_id = b.beneficiary_id
+        AND pa.program_id = b.program_id AND pa.periodo_mes = b.periodo_mes
+    CROSS JOIN LATERAL (
+        SELECT EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento))::int AS edad
+    ) calc
+    WHERE b.periodo_mes = %s
+)
+SELECT periodo_mes, nombre_programa, secretaria_origen,
+       provincia, sexo, grupo_etario,
+       CASE WHEN cant_prog = 1 THEN '1' WHEN cant_prog = 2 THEN '2' ELSE '3+' END AS cant_prestaciones,
+       beneficiary_id,
+       COUNT(*) AS cant_benefits,
+       SUM(monto) AS person_monto
+FROM base
+GROUP BY periodo_mes, nombre_programa, secretaria_origen,
+         provincia, sexo, grupo_etario,
+         CASE WHEN cant_prog = 1 THEN '1' WHEN cant_prog = 2 THEN '2' ELSE '3+' END,
+         beneficiary_id
+"""
+
+# Aggregate temp table → mv_cross (7 dims, already at right granularity)
+INSERT_CROSS_FROM_PP = """
+INSERT INTO {table}
+SELECT periodo_mes, nombre_programa, secretaria_origen,
+       provincia, sexo, grupo_etario, cant_prestaciones,
+       COUNT(*) AS personas,
+       SUM(cant_benefits) AS beneficios,
+       SUM(person_monto) AS montos
+FROM _pp
+GROUP BY periodo_mes, nombre_programa, secretaria_origen,
+         provincia, sexo, grupo_etario, cant_prestaciones
+"""
+
+# Re-aggregate temp table → mv_resumen (5 dims, deduplicate persons across programs)
+INSERT_RESUMEN_FROM_PP = """
+INSERT INTO {table}
+WITH person_agg AS (
+    SELECT periodo_mes, provincia, sexo, grupo_etario, cant_prestaciones,
+           beneficiary_id,
+           SUM(cant_benefits) AS cant_benefits,
+           SUM(person_monto) AS person_monto
+    FROM _pp
+    GROUP BY periodo_mes, provincia, sexo, grupo_etario, cant_prestaciones, beneficiary_id
+)
+SELECT periodo_mes, provincia, sexo, grupo_etario, cant_prestaciones,
+       COUNT(*) AS personas,
+       SUM(cant_benefits) AS beneficios,
+       SUM(person_monto) AS montos
+FROM person_agg
+GROUP BY periodo_mes, provincia, sexo, grupo_etario, cant_prestaciones
+"""
 
 # ── Periods lookup table ──
 PERIODS_TABLE = """
@@ -216,6 +164,45 @@ PROVINCIAS_TABLE = """
 CREATE TABLE IF NOT EXISTS provincias_lookup (provincia TEXT PRIMARY KEY);
 INSERT INTO provincias_lookup SELECT DISTINCT provincia FROM beneficiaries ON CONFLICT DO NOTHING;
 """
+
+
+def _apply_tuning(cur):
+    """Apply PG session tuning for heavy aggregation queries."""
+    cur.execute("SET work_mem = '4GB'")
+    cur.execute("SET maintenance_work_mem = '4GB'")
+    cur.execute("SET max_parallel_workers_per_gather = 2")
+    # Additional planner hints
+    cur.execute("SET effective_cache_size = '16GB'")
+    cur.execute("SET random_page_cost = '1.1'")
+    cur.execute("SET effective_io_concurrency = '0'")  # macOS lacks posix_fadvise()
+    cur.execute("SET temp_buffers = '256MB'")
+
+
+def _process_period(cur, conn, period, cross_table="mv_cross", resumen_table="mv_resumen"):
+    """Process one period: temp table → insert into both MVs.
+
+    NULLs (non-identified beneficiaries) are included in the main query
+    via LEFT JOINs + COALESCE — no separate NULL queries needed.
+    """
+    period_date = f"{period[:4]}-{period[5:]}-01"
+    # Params: period (bpc) + period (pa) + period_date (LATERAL) + period (WHERE)
+    params = [period, period, period_date, period]
+
+    # 1. Single scan → temp table _pp (includes NULL beneficiary_id rows)
+    cur.execute(TEMP_TABLE_SQL, params)
+
+    # 2. Aggregate for mv_cross (reads temp table only — fast)
+    cur.execute(INSERT_CROSS_FROM_PP.format(table=cross_table))
+    cross_rows = cur.rowcount
+
+    # 3. Re-aggregate for mv_resumen (reads temp table only — fast)
+    cur.execute(INSERT_RESUMEN_FROM_PP.format(table=resumen_table))
+    resumen_rows = cur.rowcount
+
+    # Commit drops the temp table (ON COMMIT DROP)
+    conn.commit()
+
+    return cross_rows, resumen_rows
 
 
 def run():
@@ -248,44 +235,42 @@ def run():
     conn.commit()
     print("  Legacy MVs limpiadas")
 
-    # Boost memory for heavy aggregation queries (default 4MB spills to disk)
-    cur.execute("SET work_mem = '1GB'")
-    cur.execute("SET maintenance_work_mem = '2GB'")
-    # Use more parallel workers for large scans/aggregations
-    cur.execute("SET max_parallel_workers_per_gather = 8")
+    # Session tuning
+    _apply_tuning(cur)
+
+    # Create empty UNLOGGED tables
+    for name, create_ddl, _, _ in TABLES:
+        cur.execute(create_ddl)
+    conn.commit()
 
     # Get available periods
     cur.execute("SELECT DISTINCT periodo_mes FROM benefits ORDER BY 1")
     periods = [r[0] for r in cur.fetchall()]
     print(f"\nPeríodos encontrados: {len(periods)}")
 
-    # Create each table, inserting period by period
-    for tbl_idx, (name, create_ddl, insert_sql, indexes) in enumerate(TABLES, 1):
-        t_mv = time.time()
-        print(f"\n{'─' * 60}")
-        print(f"[{tbl_idx}/{len(TABLES)}] Creando {name}...")
-        print(f"{'─' * 60}")
+    # Process all periods — shared temp table feeds both MVs
+    print(f"\n{'─' * 60}")
+    print("Procesando periodos (temp table compartida → mv_cross + mv_resumen)")
+    print(f"{'─' * 60}")
 
-        # Create empty UNLOGGED table
-        cur.execute(create_ddl)
-        conn.commit()
+    total_cross = 0
+    total_resumen = 0
+    for i, p in enumerate(periods, 1):
+        t_p = time.time()
+        cross_rows, resumen_rows = _process_period(cur, conn, p)
+        total_cross += cross_rows
+        total_resumen += resumen_rows
+        elapsed_p = time.time() - t_p
+        bar = "█" * int(i / len(periods) * 30)
+        bar += "░" * (30 - len(bar))
+        print(f"  {bar} {i}/{len(periods)} │ {p} │ cross:{cross_rows:>7,} res:{resumen_rows:>6,} │ {elapsed_p:>5.1f}s")
 
-        # Insert period by period (reduces memory pressure)
-        total_rows = 0
-        n_params = insert_sql.count('%s')
-        for i, p in enumerate(periods, 1):
-            t_p = time.time()
-            cur.execute(insert_sql, [p] * n_params)
-            conn.commit()
-            rows = cur.rowcount
-            total_rows += rows
-            elapsed_p = time.time() - t_p
-            bar = "█" * int(i / len(periods) * 30)
-            bar += "░" * (30 - len(bar))
-            print(f"  {bar} {i}/{len(periods)} │ {p} │ {rows:>8,} rows │ {elapsed_p:>5.1f}s")
+    print(f"\n  mv_cross: {total_cross:,} rows total")
+    print(f"  mv_resumen: {total_resumen:,} rows total")
 
-        # Convert to logged table and create indexes
-        print(f"  SET LOGGED...", end=" ", flush=True)
+    # SET LOGGED + indexes
+    for name, _, _, indexes in TABLES:
+        print(f"\n  SET LOGGED {name}...", end=" ", flush=True)
         cur.execute(f"ALTER TABLE {name} SET LOGGED")
         conn.commit()
         print("OK")
@@ -293,14 +278,10 @@ def run():
         if isinstance(indexes, str):
             indexes = [indexes]
         for idx_i, idx_sql in enumerate(indexes, 1):
-            idx_name = idx_sql.split("ON")[0].strip().replace("CREATE UNIQUE INDEX", "UNIQUE IDX").replace("CREATE INDEX", "IDX")
-            print(f"  Índice {idx_i}/{len(indexes)}...", end=" ", flush=True)
+            print(f"  Índice {idx_i}/{len(indexes)} en {name}...", end=" ", flush=True)
             cur.execute(idx_sql)
             print("OK")
         conn.commit()
-
-        elapsed = time.time() - t_mv
-        print(f"  ✓ {name}: {total_rows:,} rows en {elapsed:.1f}s")
 
     # Create lookup tables
     print(f"\n{'─' * 60}")

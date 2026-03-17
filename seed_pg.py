@@ -203,8 +203,7 @@ CREATE INDEX idx_benefits_period_state_benid ON benefits(periodo_mes, estado_ben
 CREATE INDEX idx_benefits_benid ON benefits(beneficiary_id);
 CREATE INDEX idx_ben_apellido_nombre ON beneficiaries(apellido, nombre);
 CREATE INDEX idx_ben_cuil ON beneficiaries(cuil);
-CREATE INDEX idx_payments_period ON payments(periodo_mes);
-CREATE INDEX idx_payments_compound ON payments(beneficiary_id, program_id, periodo_mes);
+CREATE INDEX idx_payments_covering ON payments(periodo_mes, beneficiary_id, program_id) INCLUDE (monto_prestacion);
 CREATE INDEX idx_ben_cuil_trgm ON beneficiaries USING gin(cuil gin_trgm_ops);
 """
 

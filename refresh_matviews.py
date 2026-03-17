@@ -15,7 +15,7 @@ import time
 import psycopg2
 import requests
 
-from create_matviews import TABLES
+from create_matviews import TABLES, _apply_tuning, _process_period
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost/rub")
 APP_URL = os.environ.get("APP_URL", "http://localhost:5000")
@@ -32,47 +32,54 @@ def run():
     print(f"DB: {DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL}")
     print("=" * 60)
 
-    # Boost memory for heavy aggregation queries
-    cur.execute("SET work_mem = '1GB'")
-    cur.execute("SET maintenance_work_mem = '2GB'")
-    cur.execute("SET max_parallel_workers_per_gather = 8")
+    # Session tuning
+    _apply_tuning(cur)
 
     # Get available periods
     cur.execute("SELECT DISTINCT periodo_mes FROM benefits ORDER BY 1")
     periods = [r[0] for r in cur.fetchall()]
     print(f"\nPeríodos encontrados: {len(periods)}")
 
-    # Step 1: Create shadow tables period by period (doesn't block readers)
-    for tbl_idx, (name, create_ddl, insert_sql, indexes) in enumerate(TABLES, 1):
-        t_tbl = time.time()
+    # Step 1: Create empty UNLOGGED shadow tables
+    print(f"\n{'─' * 60}")
+    print("Creando shadow tables...")
+    print(f"{'─' * 60}")
+    for name, create_ddl, _, _ in TABLES:
         shadow = f"{name}_new"
-        print(f"\n{'─' * 60}")
-        print(f"[{tbl_idx}/{len(TABLES)}] Creando shadow {shadow}...")
-        print(f"{'─' * 60}")
-
-        # Create empty UNLOGGED shadow table
         cur.execute(f"DROP TABLE IF EXISTS {shadow}")
         shadow_ddl = create_ddl.replace(f"TABLE {name}", f"TABLE {shadow}", 1)
         cur.execute(shadow_ddl)
-        conn.commit()
+        print(f"  {shadow} creada")
+    conn.commit()
 
-        # Insert period by period
-        shadow_insert = insert_sql.replace(f"INTO {name}", f"INTO {shadow}", 1)
-        n_params = shadow_insert.count('%s')
-        total_rows = 0
-        for i, p in enumerate(periods, 1):
-            t_p = time.time()
-            cur.execute(shadow_insert, [p] * n_params)
-            conn.commit()
-            rows = cur.rowcount
-            total_rows += rows
-            elapsed_p = time.time() - t_p
-            bar = "█" * int(i / len(periods) * 30)
-            bar += "░" * (30 - len(bar))
-            print(f"  {bar} {i}/{len(periods)} │ {p} │ {rows:>8,} rows │ {elapsed_p:>5.1f}s")
+    # Step 2: Process periods — shared temp table feeds both shadow MVs
+    print(f"\n{'─' * 60}")
+    print("Procesando periodos (temp table compartida → shadow tables)")
+    print(f"{'─' * 60}")
 
-        # Convert to logged and create indexes on shadow
-        print(f"  SET LOGGED...", end=" ", flush=True)
+    total_cross = 0
+    total_resumen = 0
+    for i, p in enumerate(periods, 1):
+        t_p = time.time()
+        cross_rows, resumen_rows = _process_period(
+            cur, conn, p,
+            cross_table="mv_cross_new",
+            resumen_table="mv_resumen_new",
+        )
+        total_cross += cross_rows
+        total_resumen += resumen_rows
+        elapsed_p = time.time() - t_p
+        bar = "█" * int(i / len(periods) * 30)
+        bar += "░" * (30 - len(bar))
+        print(f"  {bar} {i}/{len(periods)} │ {p} │ cross:{cross_rows:>7,} res:{resumen_rows:>6,} │ {elapsed_p:>5.1f}s")
+
+    print(f"\n  mv_cross_new: {total_cross:,} rows total")
+    print(f"  mv_resumen_new: {total_resumen:,} rows total")
+
+    # SET LOGGED + indexes on shadow tables
+    for name, _, _, indexes in TABLES:
+        shadow = f"{name}_new"
+        print(f"\n  SET LOGGED {shadow}...", end=" ", flush=True)
         cur.execute(f"ALTER TABLE {shadow} SET LOGGED")
         conn.commit()
         print("OK")
@@ -80,13 +87,10 @@ def run():
         if isinstance(indexes, str):
             indexes = [indexes]
         for idx_i, idx_sql in enumerate(indexes, 1):
-            print(f"  Índice {idx_i}/{len(indexes)}...", end=" ", flush=True)
+            print(f"  Índice {idx_i}/{len(indexes)} en {shadow}...", end=" ", flush=True)
             cur.execute(idx_sql.replace(f" {name}(", f" {shadow}(").replace(f" {name} ", f" {shadow} "))
             print("OK")
         conn.commit()
-
-        elapsed = time.time() - t_tbl
-        print(f"  ✓ {shadow}: {total_rows:,} rows en {elapsed:.1f}s")
 
     # Step 3: Atomic swap (~1ms, single transaction)
     print(f"\n{'─' * 60}")
