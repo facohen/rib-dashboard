@@ -1062,22 +1062,22 @@ _log_path = None  # se setea en menu()
 def _create_matviews(conn):
     """Ejecuta create_matviews.py como módulo."""
     import subprocess
-    log.info("\n  Creando tablas materializadas...")
+    # Cerrar conexión del menú para liberar locks sobre las tablas
+    conn.close()
+    log.info("\n  Creando tablas materializadas...\n")
     t0 = time.time()
-    result = subprocess.run(
-        [sys.executable, "create_matviews.py"],
-        capture_output=True, text=True,
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "create_matviews.py"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
         env={**os.environ, "DATABASE_URL": DATABASE_URL},
     )
+    for line in proc.stdout:
+        print(f"    {line}", end="", flush=True)
+    proc.wait()
     elapsed = time.time() - t0
-    if result.stdout:
-        for line in result.stdout.strip().split("\n"):
-            log.info(f"    {line}")
-    if result.returncode != 0:
-        log.error(f"  Error creando matviews (exit {result.returncode}):")
-        if result.stderr:
-            for line in result.stderr.strip().split("\n"):
-                log.error(f"    {line}")
+    if proc.returncode != 0:
+        log.error(f"  Error creando matviews (exit {proc.returncode})")
     else:
         log.info(f"  Matviews creadas en {elapsed:.1f}s")
         _clear_cache()
@@ -1086,22 +1086,21 @@ def _create_matviews(conn):
 def _refresh_matviews(conn):
     """Ejecuta refresh_matviews.py como módulo."""
     import subprocess
-    log.info("\n  Refrescando tablas materializadas...")
+    conn.close()
+    log.info("\n  Refrescando tablas materializadas...\n")
     t0 = time.time()
-    result = subprocess.run(
-        [sys.executable, "refresh_matviews.py"],
-        capture_output=True, text=True,
+    proc = subprocess.Popen(
+        [sys.executable, "-u", "refresh_matviews.py"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
         env={**os.environ, "DATABASE_URL": DATABASE_URL},
     )
+    for line in proc.stdout:
+        print(f"    {line}", end="", flush=True)
+    proc.wait()
     elapsed = time.time() - t0
-    if result.stdout:
-        for line in result.stdout.strip().split("\n"):
-            log.info(f"    {line}")
-    if result.returncode != 0:
-        log.error(f"  Error refrescando matviews (exit {result.returncode}):")
-        if result.stderr:
-            for line in result.stderr.strip().split("\n"):
-                log.error(f"    {line}")
+    if proc.returncode != 0:
+        log.error(f"  Error refrescando matviews (exit {proc.returncode})")
     else:
         log.info(f"  Matviews refrescadas en {elapsed:.1f}s")
         _clear_cache()
@@ -1281,9 +1280,10 @@ def _check_consistency(conn):
             for periodo in periods:
                 cur.execute("SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes=%s", (periodo,))
                 mv_total = cur.fetchone()[0] or 0
-                cur.execute("""SELECT COUNT(DISTINCT beneficiary_id) FROM benefits
-                              WHERE periodo_mes=%s AND estado_beneficio='ACTIVO'
-                              AND beneficiary_id IS NOT NULL""", (periodo,))
+                cur.execute("""SELECT COUNT(DISTINCT beneficiary_id)
+                                     + COUNT(*) FILTER (WHERE beneficiary_id IS NULL)
+                              FROM benefits
+                              WHERE periodo_mes=%s""", (periodo,))
                 real_total = cur.fetchone()[0]
                 if abs(mv_total - real_total) > 0:
                     check_ok = False
@@ -1453,9 +1453,11 @@ def menu():
 
         elif opcion == "5":
             _create_matviews(conn)
+            conn = get_conn()  # reconectar después de create_matviews
 
         elif opcion == "6":
             _refresh_matviews(conn)
+            conn = get_conn()  # reconectar después de refresh_matviews
 
         elif opcion == "7":
             _matviews_status(conn)

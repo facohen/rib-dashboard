@@ -155,11 +155,7 @@ def get_user_by_email(conn, email):
 # ──────────────────────────────────────────────
 
 def get_periods(conn):
-    try:
-        rows = query(conn, "SELECT periodo_mes FROM periods ORDER BY periodo_mes DESC")
-    except Exception:
-        conn.rollback()
-        rows = query(conn, "SELECT DISTINCT periodo_mes FROM benefits ORDER BY periodo_mes DESC")
+    rows = query(conn, "SELECT periodo_mes FROM periods ORDER BY periodo_mes DESC")
     return [r["periodo_mes"] for r in rows]
 
 
@@ -168,11 +164,7 @@ def get_programs(conn):
 
 
 def get_provincias(conn):
-    try:
-        return query(conn, "SELECT provincia FROM provincias_lookup ORDER BY provincia")
-    except Exception:
-        conn.rollback()
-        return query(conn, "SELECT DISTINCT provincia FROM beneficiaries ORDER BY provincia")
+    return query(conn, "SELECT provincia FROM provincias_lookup ORDER BY provincia")
 
 
 # ──────────────────────────────────────────────
@@ -230,20 +222,6 @@ def get_summary(conn, period, filters=None):
         elif cp == "3+":
             con3 = t
 
-    # Incompatibilidades — direct query (small, fast with indexes)
-    incomp = query_one(conn, """
-        SELECT COUNT(DISTINCT b1.beneficiary_id) AS cant_incompatibles
-        FROM incompatibility_rules ir
-        JOIN benefits b1 ON b1.program_id = ir.program_a_id
-            AND b1.estado_beneficio = 'ACTIVO' AND b1.periodo_mes = %s
-        JOIN benefits b2 ON b2.beneficiary_id = b1.beneficiary_id
-            AND b2.program_id = ir.program_b_id
-            AND b2.periodo_mes = b1.periodo_mes
-            AND b2.estado_beneficio = 'ACTIVO'
-        WHERE ir.is_compatible = 0
-    """, (period,))
-    incomp_count = incomp["cant_incompatibles"] if incomp else 0
-
     prom_prest = round(total_prest / total_benef, 2) if total_benef else 0
     prom_monto = round(monto_total / total_benef) if total_benef else 0
 
@@ -254,7 +232,7 @@ def get_summary(conn, period, filters=None):
         "promedioMontoPorBenef": prom_monto,
         "montoTotal": round(monto_total),
         "tasaNoIdentificados": 0,
-        "casosIncompatibilidad": incomp_count,
+        "casosIncompatibilidad": 0,
         "cantidadProgramas": cant_programas,
         "concentracion": {"conUna": con1, "conDos": con2, "conTresMas": con3},
     }
@@ -286,18 +264,8 @@ def get_by_provincia(conn, period, filters=None, metric="personas"):
 
 
 def get_by_departamento(conn, period, filters=None):
-    # Departamento is not in mv_cross — use raw query with indexes
-    corte = _corte_date(period)
-    fj, fw, fp = _apply_filters_raw(filters, corte, has_ben=True, has_prog=False)
-    extra = _extra_where(fw)
-    rows = query(conn, f"""
-        SELECT ben.departamento, ben.provincia, COUNT(DISTINCT b.beneficiary_id) AS total
-        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {fj}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO'
-        {extra}
-        GROUP BY ben.departamento, ben.provincia ORDER BY total DESC LIMIT 10
-    """, [period] + fp)
-    return [{**r, "label": f"{r['departamento']}, {r['provincia']}"} for r in rows]
+    # Departamento no está en las MVs — devolver vacío
+    return []
 
 
 def get_by_programa(conn, period, filters=None, metric="personas"):
@@ -380,68 +348,6 @@ def get_evolucion(conn, filters=None, metric="montos"):
     """, params)
 
 
-# ──────────────────────────────────────────────
-# Raw filter helper (for departamento fallback)
-# ──────────────────────────────────────────────
-
-_GRUPO_RANGES = {
-    "Niñez (0-12)": (0, 13),
-    "Jóvenes (13-29)": (13, 30),
-    "Adultos (30-59)": (30, 60),
-    "Mayores (60+)": (60, 999),
-}
-
-def _extra_where(fw):
-    """Join filter WHERE parts with AND prefix, or empty string if none."""
-    return (" AND " + " AND ".join(fw)) if fw else ""
-
-
-def _apply_filters_raw(filters, corte=None, has_ben=False, has_prog=False):
-    """Build extra JOINs, WHERE clauses and params from cross-chart filters.
-    For use with raw benefits table queries (departamento).
-    """
-    if not filters:
-        return "", [], []
-
-    joins = []
-    where = []
-    params = []
-
-    need_ben = any(filters.get(k) for k in ("sexo", "provincia", "departamento", "grupo_etario"))
-    need_prog = any(filters.get(k) for k in ("secretaria", "programa"))
-
-    if need_ben and not has_ben:
-        joins.append("JOIN beneficiaries ben ON b.beneficiary_id=ben.id")
-    if need_prog and not has_prog:
-        joins.append("JOIN programs p ON b.program_id=p.id")
-
-    if filters.get("secretaria"):
-        where.append("p.secretaria_origen=%s")
-        params.append(filters["secretaria"])
-    if filters.get("sexo"):
-        where.append("ben.sexo=%s")
-        params.append(filters["sexo"])
-    if filters.get("programa"):
-        where.append("p.nombre_programa=%s")
-        params.append(filters["programa"])
-    if filters.get("provincia"):
-        where.append("ben.provincia=%s")
-        params.append(filters["provincia"])
-    if filters.get("departamento"):
-        where.append("ben.departamento=%s")
-        params.append(filters["departamento"])
-    if filters.get("grupo_etario") and corte:
-        val = filters["grupo_etario"]
-        rng = _GRUPO_RANGES.get(val)
-        if rng:
-            lo, hi = rng
-            where.append("EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) >= %s")
-            params.extend([corte, lo])
-            where.append("EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) < %s")
-            params.extend([corte, hi])
-
-    join_sql = " ".join(joins)
-    return join_sql, where, params
 
 
 # ──────────────────────────────────────────────

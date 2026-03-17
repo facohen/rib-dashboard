@@ -37,30 +37,60 @@ def run():
     cur.execute("SET maintenance_work_mem = '2GB'")
     cur.execute("SET max_parallel_workers_per_gather = 8")
 
-    # Step 1: Create shadow tables (long operation, doesn't block readers)
-    for name, create_sql, indexes in TABLES:
+    # Get available periods
+    cur.execute("SELECT DISTINCT periodo_mes FROM benefits ORDER BY 1")
+    periods = [r[0] for r in cur.fetchall()]
+    print(f"\nPeríodos encontrados: {len(periods)}")
+
+    # Step 1: Create shadow tables period by period (doesn't block readers)
+    for tbl_idx, (name, create_ddl, insert_sql, indexes) in enumerate(TABLES, 1):
         t_tbl = time.time()
-        print(f"\nCreando shadow {name}_new...", end=" ", flush=True)
-        cur.execute(f"DROP TABLE IF EXISTS {name}_new")
-        new_sql = create_sql.replace(f"CREATE TABLE {name}", f"CREATE TABLE {name}_new", 1)
-        cur.execute(new_sql)
+        shadow = f"{name}_new"
+        print(f"\n{'─' * 60}")
+        print(f"[{tbl_idx}/{len(TABLES)}] Creando shadow {shadow}...")
+        print(f"{'─' * 60}")
+
+        # Create empty UNLOGGED shadow table
+        cur.execute(f"DROP TABLE IF EXISTS {shadow}")
+        shadow_ddl = create_ddl.replace(f"TABLE {name}", f"TABLE {shadow}", 1)
+        cur.execute(shadow_ddl)
         conn.commit()
 
-        # Step 2: Create indexes on shadow (separate txn)
+        # Insert period by period
+        shadow_insert = insert_sql.replace(f"INTO {name}", f"INTO {shadow}", 1)
+        n_params = shadow_insert.count('%s')
+        total_rows = 0
+        for i, p in enumerate(periods, 1):
+            t_p = time.time()
+            cur.execute(shadow_insert, [p] * n_params)
+            conn.commit()
+            rows = cur.rowcount
+            total_rows += rows
+            elapsed_p = time.time() - t_p
+            bar = "█" * int(i / len(periods) * 30)
+            bar += "░" * (30 - len(bar))
+            print(f"  {bar} {i}/{len(periods)} │ {p} │ {rows:>8,} rows │ {elapsed_p:>5.1f}s")
+
+        # Convert to logged and create indexes on shadow
+        print(f"  SET LOGGED...", end=" ", flush=True)
+        cur.execute(f"ALTER TABLE {shadow} SET LOGGED")
+        conn.commit()
+        print("OK")
+
         if isinstance(indexes, str):
             indexes = [indexes]
-        for idx_sql in indexes:
-            # Replace table name in index definitions
-            cur.execute(idx_sql.replace(f" {name}(", f" {name}_new(").replace(f" {name} ", f" {name}_new "))
+        for idx_i, idx_sql in enumerate(indexes, 1):
+            print(f"  Índice {idx_i}/{len(indexes)}...", end=" ", flush=True)
+            cur.execute(idx_sql.replace(f" {name}(", f" {shadow}(").replace(f" {name} ", f" {shadow} "))
+            print("OK")
         conn.commit()
 
-        cur.execute(f"SELECT COUNT(*) FROM {name}_new")
-        row_count = cur.fetchone()[0]
         elapsed = time.time() - t_tbl
-        print(f"OK ({row_count:,} rows, {elapsed:.1f}s)")
+        print(f"  ✓ {shadow}: {total_rows:,} rows en {elapsed:.1f}s")
 
     # Step 3: Atomic swap (~1ms, single transaction)
-    print("\nSwap atómico...", end=" ", flush=True)
+    print(f"\n{'─' * 60}")
+    print("Swap atómico...", end=" ", flush=True)
     t_swap = time.time()
     cur.execute("""
         DROP TABLE IF EXISTS mv_cross_old;
@@ -89,21 +119,30 @@ def run():
     print("OK")
 
     # ANALYZE
-    print("ANALYZE...", end=" ", flush=True)
+    print(f"{'─' * 60}")
+    print("ANALYZE")
+    print(f"{'─' * 60}")
     conn.autocommit = True
     for name in ["mv_cross", "mv_resumen", "periods", "provincias_lookup"]:
+        print(f"  {name}...", end=" ", flush=True)
         cur.execute(f"ANALYZE {name}")
-    print("OK")
+        print("OK")
 
     # Row counts
-    print("\nRow counts:")
+    print(f"\n{'─' * 60}")
+    print("Resultado")
+    print(f"{'─' * 60}")
     for name in ["mv_cross", "mv_resumen", "periods", "provincias_lookup"]:
         cur.execute(f"SELECT COUNT(*) FROM {name}")
         cnt = cur.fetchone()[0]
-        print(f"  {name}: {cnt:,}")
+        print(f"  {name}: {cnt:,} rows")
 
     total_time = time.time() - t0
-    print(f"\nRefresh completado en {total_time:.1f}s")
+    mins = int(total_time // 60)
+    secs = total_time % 60
+    print(f"\n{'=' * 60}")
+    print(f"Refresh completado en {mins}m {secs:.0f}s")
+    print(f"{'=' * 60}")
 
     cur.close()
     conn.close()

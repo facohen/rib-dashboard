@@ -1,0 +1,20 @@
+14:04:41 
+=======================================================
+14:04:41   RUB — Ingesta de Datasets
+14:04:41   DB: localhost/rub
+14:04:41   Log: /Users/fede/repos/rub-dashboard/logs/ingest_20260316_140441.log
+14:04:41 =======================================================
+14:06:38   Tablas de datos truncadas.
+14:06:55 
+  Estado actual de la base de datos:
+14:06:55   Tabla                        Registros
+14:06:55   ------------------------- ------------
+14:06:55   programs                             0
+14:06:55   beneficiaries                        0
+14:06:55   benefits                             0
+14:06:55   payments                             0
+14:06:55   incompatibility_rules                0
+14:06:55   users                                2
+14:06:55   secretarias                          0
+15:23:28 
+  Creando tablas materializadas...

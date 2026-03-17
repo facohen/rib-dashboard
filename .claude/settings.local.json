@@ -10,7 +10,8 @@
       "Bash(python:*)",
       "Bash(pip install:*)",
       "Bash(psql:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(export:*)"
     ]
   }
 }
