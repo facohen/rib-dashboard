@@ -23,7 +23,8 @@
     </div>
     <!-- Metric Toggle -->
     <div class="metric-toggle" id="metricToggle">
-        <button class="metric-btn active" data-metric="beneficiarios" onclick="setMetric('beneficiarios')">Beneficiarios</button>
+        <button class="metric-btn active" data-metric="personas" onclick="setMetric('personas')">Personas</button>
+        <button class="metric-btn" data-metric="beneficios" onclick="setMetric('beneficios')">Beneficios</button>
         <button class="metric-btn" data-metric="montos" onclick="setMetric('montos')">Montos</button>
     </div>
     <!-- Theme Toggle -->
@@ -127,14 +128,23 @@
 
 {% block scripts %}
 <script>
+    // Wait for defer'd Chart.js and Leaflet to load
+    document.addEventListener('DOMContentLoaded', function() {
+    // Register datalabels plugin after Chart.js loads
+    if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined') {
+        Chart.register(ChartDataLabels);
+    }
+
     const COLORS = ['#4a67ff', '#7c3aed', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#a855f7']
-    const LIGHT = c => c + '33'
 
     let period = '{{ default_period }}'
     let charts = {}
-    let globalMetric = 'beneficiarios'
+    let globalMetric = 'personas'
 
-    function setMetric(m) {
+    // ── Cached data for theme re-render ──
+    let cachedData = {}
+
+    window.setMetric = function(m) {
         globalMetric = m
         document.querySelectorAll('.metric-btn').forEach(btn =>
             btn.classList.toggle('active', btn.dataset.metric === m))
@@ -152,9 +162,9 @@
         return qs
     }
 
-    function setFilter(key, value) {
+    window.setFilter = function(key, value) {
         if (globalChartFilters[key] === value) {
-            delete globalChartFilters[key]  // toggle off
+            delete globalChartFilters[key]
         } else {
             globalChartFilters[key] = value
         }
@@ -162,7 +172,7 @@
         loadAll()
     }
 
-    function clearFilters() {
+    window.clearFilters = function() {
         globalChartFilters = {}
         renderFilterBadges()
         loadAll()
@@ -177,19 +187,15 @@
             return
         }
         container.style.display = 'flex'
-        container.innerHTML = keys.map(k =>
-            `<span class="filter-badge">${k}: <strong>${globalChartFilters[k]}</strong> <span onclick="setFilter('${k}','${globalChartFilters[k]}')" style="cursor:pointer;margin-left:4px;">✕</span></span>`
-        ).join('') + `<span class="filter-badge filter-clear" onclick="clearFilters()" style="cursor:pointer;">Limpiar filtros</span>`
+        const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
+        container.innerHTML = keys.map(k => {
+            const safeK = esc(k), safeV = esc(globalChartFilters[k])
+            return `<span class="filter-badge">${safeK}: <strong>${safeV}</strong> <span onclick="setFilter('${safeK}','${safeV}')" style="cursor:pointer;margin-left:4px;">✕</span></span>`
+        }).join('') + `<span class="filter-badge filter-clear" onclick="clearFilters()" style="cursor:pointer;">Limpiar filtros</span>`
     }
 
-    function onChartClick(chart, filterKey, labelTransform) {
-        chart.options.onClick = (evt, elements) => {
-            if (!elements.length) return
-            const idx = elements[0].index
-            let label = chart.data.labels[idx]
-            if (labelTransform) label = labelTransform(label)
-            setFilter(filterKey, label)
-        }
+    function isMoneyMetric() {
+        return globalMetric === 'montos'
     }
 
     function fmtBig(n) {
@@ -199,7 +205,7 @@
         return '$' + (n || 0);
     }
 
-    // Theme logic para flask version
+    // Theme logic
     function initTheme() {
         const savedTheme = localStorage.getItem('siis-theme');
         if (savedTheme === 'light') {
@@ -210,16 +216,17 @@
     }
     initTheme();
 
-    function toggleTheme() {
+    window.toggleTheme = function() {
         const isLight = document.body.classList.toggle('light-theme');
         const newTheme = isLight ? 'light' : 'dark';
         localStorage.setItem('siis-theme', newTheme);
         const ic = document.getElementById('themeIcon');
         if (ic) ic.textContent = isLight ? '🌙' : '☀️';
-        loadAll(); // Recargar graficos version backend
+        // Re-render from cached data — no network requests
+        rerenderFromCache()
     }
 
-    function onPeriodChange(p) { period = p; clearFilters() }
+    window.onPeriodChange = function(p) { period = p; clearFilters() }
 
     function fmt(n) {
         if (n >= 1000000) return '$' + (n / 1000000).toFixed(1) + 'M'
@@ -233,17 +240,27 @@
         return n
     }
 
+    function themeColors() {
+        const isLight = document.body.classList.contains('light-theme')
+        return {
+            isLight,
+            tc: isLight ? '#4b5563' : 'rgba(255,255,255,0.6)',
+            gc: isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)',
+            dlc: isLight ? '#1f2937' : '#ffffff',
+            dls: isLight ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.8)',
+            tooltipBg: isLight ? '#1f2937' : '#1a1d2a',
+            tooltipBorder: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)',
+            chartBorder: isLight ? '#ffffff' : '#1a1d2a',
+        }
+    }
+
     function makeChart(id, type, labels, data, colors, opts = {}) {
         const ctx = document.getElementById(id)
         if (!ctx) return
         if (charts[id]) charts[id].destroy()
         const defaultColors = colors || data.map((_, i) => COLORS[i % COLORS.length])
 
-        const isLight = document.body.classList.contains('light-theme');
-        const tc = isLight ? '#4b5563' : 'rgba(255,255,255,0.6)';
-        const gc = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)';
-        const dlc = isLight ? '#1f2937' : '#ffffff';
-        const dls = isLight ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.8)';
+        const {isLight, tc, gc, dlc, dls, tooltipBg, tooltipBorder, chartBorder} = themeColors()
 
         charts[id] = new Chart(ctx, {
             type,
@@ -252,7 +269,7 @@
                 datasets: [{
                     data,
                     backgroundColor: type === 'bar' ? defaultColors.map(c => c + '99') : defaultColors,
-                    borderColor: type === 'bar' ? defaultColors : (isLight ? '#ffffff' : '#1a1d2a'),
+                    borderColor: type === 'bar' ? defaultColors : chartBorder,
                     borderWidth: type === 'doughnut' ? 2 : 1,
                     borderRadius: type === 'bar' ? 6 : 0,
                     hoverOffset: 8,
@@ -268,16 +285,16 @@
                         labels: { color: tc, font: { size: 11, family: 'Inter' }, padding: 12, boxWidth: 10, boxHeight: 10 }
                     },
                     tooltip: {
-                        backgroundColor: isLight ? '#1f2937' : '#1a1d2a', borderColor: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)', borderWidth: 1,
+                        backgroundColor: tooltipBg, borderColor: tooltipBorder, borderWidth: 1,
                         titleColor: '#e4e6f0', bodyColor: 'rgba(255,255,255,0.7)',
                         callbacks: opts.tooltipCb || (type === 'doughnut' ? {
                             label: c => {
                                 const sum = c.chart.data.datasets[0].data.reduce((a, b) => a + Number(b), 0);
                                 const pct = ((c.raw * 100) / sum).toFixed(1) + '%';
-                                const val = globalMetric === 'montos' ? fmtBig(c.raw) : c.raw.toLocaleString('es-AR');
+                                const val = isMoneyMetric() ? fmtBig(c.raw) : c.raw.toLocaleString('es-AR');
                                 return ` ${c.label}: ${val} (${pct})`;
                             }
-                        } : (globalMetric === 'montos' && type === 'bar' ? {
+                        } : (isMoneyMetric() && type === 'bar' ? {
                             label: c => c.label + ': ' + fmtBig(c.raw)
                         } : {})),
                     },
@@ -286,12 +303,12 @@
                         font: { weight: 'bold', size: 11 },
                         formatter: (value, context) => {
                             if (value <= 0) return '';
-                            if (globalMetric === 'montos' && type === 'bar') return fmtBig(value);
+                            if (isMoneyMetric() && type === 'bar') return fmtBig(value);
                             const dataArr = context.chart.data.datasets[0].data;
                             const sum = dataArr.reduce((a, b) => a + Number(b), 0);
                             const pct = ((value * 100) / sum).toFixed(1) + '%';
                             if (type === 'doughnut') {
-                                const valStr = globalMetric === 'montos' ? fmtBig(value) : value.toLocaleString('es-AR');
+                                const valStr = isMoneyMetric() ? fmtBig(value) : value.toLocaleString('es-AR');
                                 return pct + '\n' + valStr;
                             }
                             return pct;
@@ -318,11 +335,7 @@
         if (!ctx) return
         if (charts[id]) charts[id].destroy()
 
-        const isLight = document.body.classList.contains('light-theme');
-        const tc = isLight ? '#4b5563' : 'rgba(255,255,255,0.6)';
-        const gc = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)';
-        const dlc = isLight ? '#1f2937' : '#ffffff';
-        const dls = isLight ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.8)';
+        const {tc, gc, dlc, dls, tooltipBg, tooltipBorder} = themeColors()
         charts[id] = new Chart(ctx, {
             type: 'bar',
             data: {
@@ -334,7 +347,7 @@
                 plugins: {
                     legend: { display: false },
                     tooltip: {
-                        backgroundColor: isLight ? '#1f2937' : '#1a1d2a', borderColor: isLight ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.1)', borderWidth: 1,
+                        backgroundColor: tooltipBg, borderColor: tooltipBorder, borderWidth: 1,
                         titleColor: '#e4e6f0', bodyColor: 'rgba(255,255,255,0.7)'
                     },
                     datalabels: {
@@ -361,26 +374,35 @@
         })
     }
 
-    async function loadSummary() {
-        const r = await fetch(`/api/indicators/summary?${filterQS()}`)
-        const d = await r.json()
+    function renderSummary(d) {
         document.getElementById('kpi-cobertura').textContent = d.cobertura.toLocaleString('es-AR')
         document.getElementById('kpi-monto-total').textContent = fmt(d.montoTotal)
         document.getElementById('kpi-prom-prest').textContent = d.promedioPrestaciones.toFixed(2)
         document.getElementById('kpi-prom-monto').textContent = fmt(d.promedioMontoPorBenef)
         document.getElementById('kpi-cant-programas').textContent = d.cantidadProgramas
-        // concentración
         const c = d.concentracion
+        const concValues = ['1', '2', '3+']
         makeChart('chartConcentracion', 'doughnut',
             ['1 prestación', '2 prestaciones', '3+ prestaciones'],
             [c.conUna, c.conDos, c.conTresMas],
             ['#4a67ff', '#7c3aed', '#10b981']
         )
+        if (charts['chartConcentracion']) {
+            charts['chartConcentracion'].options.onClick = (evt, elements) => {
+                if (!elements.length) return
+                setFilter('cant_prestaciones', concValues[elements[0].index])
+            }
+        }
     }
 
-    async function loadSecretaria() {
-        const r = await fetch(`/api/indicators/by-secretaria?${filterQS('secretaria')}`)
+    async function loadSummary() {
+        const r = await fetch(`/api/indicators/summary?${filterQS()}`)
         const d = await r.json()
+        cachedData.summary = d
+        renderSummary(d)
+    }
+
+    function renderSecretaria(d) {
         const fullLabels = d.map(x => x.secretaria)
         const labels = fullLabels.map(s => s.replace('Secretaría de ', ''))
         makeChart('chartSecretaria', 'bar', labels, d.map(x => x.total), COLORS)
@@ -392,9 +414,14 @@
         }
     }
 
-    async function loadSexo() {
-        const r = await fetch(`/api/indicators/by-sexo?${filterQS('sexo')}`)
+    async function loadSecretaria() {
+        const r = await fetch(`/api/indicators/by-secretaria?${filterQS('secretaria')}`)
         const d = await r.json()
+        cachedData.secretaria = d
+        renderSecretaria(d)
+    }
+
+    function renderSexo(d) {
         const labels = d.map(x => x.label)
         makeChart('chartSexo', 'doughnut', labels, d.map(x => x.total),
             ['#4a67ff', '#ec4899', '#10b981', '#f59e0b'])
@@ -406,9 +433,14 @@
         }
     }
 
-    async function loadEtario() {
-        const r = await fetch(`/api/indicators/by-grupo-etario?${filterQS('grupo_etario')}`)
+    async function loadSexo() {
+        const r = await fetch(`/api/indicators/by-sexo?${filterQS('sexo')}`)
         const d = await r.json()
+        cachedData.sexo = d
+        renderSexo(d)
+    }
+
+    function renderEtario(d) {
         const labels = d.map(x => x.grupo)
         makeChart('chartEtario', 'bar', labels, d.map(x => x.total),
             ['#06b6d4', '#4a67ff', '#7c3aed', '#10b981', '#f59e0b', '#ef4444'])
@@ -420,9 +452,14 @@
         }
     }
 
-    async function loadPrograma() {
-        const r = await fetch(`/api/indicators/by-programa?${filterQS('programa')}`)
+    async function loadEtario() {
+        const r = await fetch(`/api/indicators/by-grupo-etario?${filterQS('grupo_etario')}`)
         const d = await r.json()
+        cachedData.etario = d
+        renderEtario(d)
+    }
+
+    function renderPrograma(d) {
         const labels = d.map(x => x.programa)
         makeChart('chartPrograma', 'bar', labels, d.map(x => x.total))
         if (charts['chartPrograma']) {
@@ -433,9 +470,14 @@
         }
     }
 
-    async function loadProvincia() {
-        const r = await fetch(`/api/indicators/by-provincia?${filterQS('provincia')}`)
+    async function loadPrograma() {
+        const r = await fetch(`/api/indicators/by-programa?${filterQS('programa')}`)
         const d = await r.json()
+        cachedData.programa = d
+        renderPrograma(d)
+    }
+
+    function renderProvincia(d) {
         const labels = d.map(x => x.provincia)
         makeHorizBar('chartProvincia', labels, d.map(x => x.total))
         if (charts['chartProvincia']) {
@@ -446,10 +488,16 @@
         }
     }
 
-    async function loadEvolucion() {
-        const r = await fetch(`/api/indicators/evolucion?${filterQS()}`)
-        const data = await r.json()
+    async function loadProvincia() {
+        const r = await fetch(`/api/indicators/by-provincia?${filterQS('provincia')}`)
+        const d = await r.json()
+        cachedData.provincia = d
+        renderProvincia(d)
+        // Pass data to geo map — avoids duplicate API call
+        renderGeoMap(d)
+    }
 
+    function renderEvolucion(data) {
         const labels = data.map(x => x.periodo_mes)
         const vals = data.map(x => x.total)
 
@@ -457,9 +505,7 @@
         if (!evCtx) return
         if (charts['c-evolucion']) charts['c-evolucion'].destroy()
 
-        const isLight = document.body.classList.contains('light-theme')
-        const tc = isLight ? '#4b5563' : 'rgba(255,255,255,0.6)'
-        const gc = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)'
+        const {isLight, tc, gc, tooltipBg} = themeColors()
 
         let grad = evCtx.getContext('2d').createLinearGradient(0, 0, 0, 300)
         if (isLight) {
@@ -494,16 +540,16 @@
                 plugins: {
                     legend: { display: false },
                     tooltip: {
-                        backgroundColor: isLight ? '#1f2937' : '#1a1d2a',
+                        backgroundColor: tooltipBg,
                         titleColor: '#fff', bodyColor: 'rgba(255,255,255,0.8)', padding: 10,
-                        callbacks: { label: c => 'Total: ' + (globalMetric === 'montos' ? fmtBig(c.raw) : c.raw.toLocaleString('es-AR')) }
+                        callbacks: { label: c => 'Total: ' + (isMoneyMetric() ? fmtBig(c.raw) : c.raw.toLocaleString('es-AR')) }
                     },
                     datalabels: { display: false }
                 },
                 scales: {
                     x: { ticks: { color: tc, font: { size: 11 } }, grid: { display: false } },
                     y: {
-                        ticks: { color: tc, font: { size: 11 }, callback: v => globalMetric === 'montos' ? fmtBig(v) : fmtNum(v) },
+                        ticks: { color: tc, font: { size: 11 }, callback: v => isMoneyMetric() ? fmtBig(v) : fmtNum(v) },
                         grid: { color: gc, borderDash: [4, 4] }
                     }
                 }
@@ -511,15 +557,20 @@
         })
     }
 
+    async function loadEvolucion() {
+        const r = await fetch(`/api/indicators/evolucion?${filterQS()}`)
+        const data = await r.json()
+        cachedData.evolucion = data
+        renderEvolucion(data)
+    }
+
     // ── Mapa Coroplético ──
     let leafletMap = null
     let geoJsonLayer = null
     let geoJsonData = null
 
-    // Paleta violeta de 7 niveles: claro → oscuro
     const VIOLET_PALETTE = ['#ede9fe','#ddd6fe','#c4b5fd','#a78bfa','#8b5cf6','#7c3aed','#5b21b6']
 
-    // Calcula breaks por cuantiles: divide los valores reales en N grupos iguales
     function quantileBreaks(values, nClasses) {
         const sorted = [...values].filter(v => v > 0).sort((a, b) => a - b)
         if (sorted.length === 0) return []
@@ -538,12 +589,11 @@
         return VIOLET_PALETTE[VIOLET_PALETTE.length - 1]
     }
 
-    async function loadGeoMap() {
-        const r = await fetch(`/api/indicators/by-provincia?${filterQS('provincia')}`)
-        const apiData = await r.json()
-
+    // renderGeoMap receives data from loadProvincia — no separate API call
+    function renderGeoMap(apiData) {
         const mapDiv = document.getElementById('map-argentina')
         if (!mapDiv) return
+        if (typeof L === 'undefined') return
 
         const isLight = document.body.classList.contains('light-theme')
         const tileUrl = isLight
@@ -568,65 +618,78 @@
             }).addTo(leafletMap)
         }
 
-        // Remove previous GeoJSON layer
         if (geoJsonLayer) {
             leafletMap.removeLayer(geoJsonLayer)
             geoJsonLayer = null
         }
 
-        if (!apiData.length) return
+        if (!apiData || !apiData.length) return
 
-        // Build lookup: provincia name → total
         const lookup = {}
         apiData.forEach(d => { lookup[d.provincia] = d.total })
         const allValues = apiData.map(d => d.total)
         const breaks = quantileBreaks(allValues, VIOLET_PALETTE.length)
 
-        // Load GeoJSON if not cached
-        if (!geoJsonData) {
-            try {
-                const gr = await fetch('/static/argentina-provincias.geojson')
-                geoJsonData = await gr.json()
-            } catch (e) {
-                console.error('Error loading GeoJSON:', e)
-                return
-            }
+        function addGeoLayer() {
+            if (!geoJsonData) return
+            const borderColor = isLight ? '#94a3b8' : '#475569'
+
+            geoJsonLayer = L.geoJSON(geoJsonData, {
+                style: function(feature) {
+                    const name = feature.properties.nombre
+                    const val = lookup[name] || 0
+                    return {
+                        fillColor: val > 0 ? choroplethColor(val, breaks) : (isLight ? '#e2e8f0' : '#334155'),
+                        fillOpacity: val > 0 ? 0.75 : 0.15,
+                        color: borderColor,
+                        weight: 1.5,
+                        opacity: 0.8
+                    }
+                },
+                onEachFeature: function(feature, layer) {
+                    const name = feature.properties.nombre
+                    const val = lookup[name] || 0
+                    const valLabel = isMoneyMetric()
+                        ? fmtBig(val)
+                        : val.toLocaleString('es-AR') + ' ' + globalMetric
+                    layer.bindTooltip(
+                        `<strong>${name}</strong><br>${valLabel}`,
+                        { sticky: true, className: 'leaflet-tooltip' }
+                    )
+                    layer.on('click', () => setFilter('provincia', name))
+                    layer.on('mouseover', function() {
+                        this.setStyle({ weight: 3, fillOpacity: 0.9 })
+                        this.bringToFront()
+                    })
+                    layer.on('mouseout', function() {
+                        geoJsonLayer.resetStyle(this)
+                    })
+                }
+            }).addTo(leafletMap)
         }
 
-        const borderColor = isLight ? '#94a3b8' : '#475569'
+        if (!geoJsonData) {
+            fetch('/static/argentina-provincias.geojson')
+                .then(r => r.json())
+                .then(data => { geoJsonData = data; addGeoLayer() })
+                .catch(e => console.error('Error loading GeoJSON:', e))
+        } else {
+            addGeoLayer()
+        }
+    }
 
-        geoJsonLayer = L.geoJSON(geoJsonData, {
-            style: function(feature) {
-                const name = feature.properties.nombre
-                const val = lookup[name] || 0
-                return {
-                    fillColor: val > 0 ? choroplethColor(val, breaks) : (isLight ? '#e2e8f0' : '#334155'),
-                    fillOpacity: val > 0 ? 0.75 : 0.15,
-                    color: borderColor,
-                    weight: 1.5,
-                    opacity: 0.8
-                }
-            },
-            onEachFeature: function(feature, layer) {
-                const name = feature.properties.nombre
-                const val = lookup[name] || 0
-                const valLabel = globalMetric === 'montos'
-                    ? fmtBig(val)
-                    : val.toLocaleString('es-AR') + ' beneficiarios'
-                layer.bindTooltip(
-                    `<strong>${name}</strong><br>${valLabel}`,
-                    { sticky: true, className: 'leaflet-tooltip' }
-                )
-                layer.on('click', () => setFilter('provincia', name))
-                layer.on('mouseover', function() {
-                    this.setStyle({ weight: 3, fillOpacity: 0.9 })
-                    this.bringToFront()
-                })
-                layer.on('mouseout', function() {
-                    geoJsonLayer.resetStyle(this)
-                })
-            }
-        }).addTo(leafletMap)
+    // Re-render all charts from cached data (for theme toggle — no network)
+    function rerenderFromCache() {
+        if (cachedData.summary) renderSummary(cachedData.summary)
+        if (cachedData.secretaria) renderSecretaria(cachedData.secretaria)
+        if (cachedData.sexo) renderSexo(cachedData.sexo)
+        if (cachedData.etario) renderEtario(cachedData.etario)
+        if (cachedData.programa) renderPrograma(cachedData.programa)
+        if (cachedData.provincia) {
+            renderProvincia(cachedData.provincia)
+            renderGeoMap(cachedData.provincia)
+        }
+        if (cachedData.evolucion) renderEvolucion(cachedData.evolucion)
     }
 
     function loadAll() {
@@ -636,10 +699,10 @@
         loadEvolucion()
         loadEtario()
         loadSexo()
-        loadProvincia()
-        loadGeoMap()
+        loadProvincia()  // also renders geo map
     }
 
     loadAll()
+    }) // end DOMContentLoaded
 </script>
 {% endblock %}

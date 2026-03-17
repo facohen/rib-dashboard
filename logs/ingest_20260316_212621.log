@@ -1,0 +1,14 @@
+21:26:21 
+=======================================================
+21:26:21   RUB — Ingesta de Datasets
+21:26:21   DB: localhost/rub
+21:26:21   Log: /Users/fede/repos/rub-dashboard/logs/ingest_20260316_212621.log
+21:26:21 =======================================================
+21:26:23 
+  Iniciando dashboard en http://localhost:5000 ...
+21:26:23     admin@demo.local / Demo123!
+21:26:23     Ctrl+C para detener
+
+21:26:36 
+  Hasta luego.
+

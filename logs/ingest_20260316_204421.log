@@ -1,0 +1,43 @@
+20:44:21 
+=======================================================
+20:44:21   RUB — Ingesta de Datasets
+20:44:21   DB: localhost/rub
+20:44:21   Log: /Users/fede/repos/rub-dashboard/logs/ingest_20260316_204421.log
+20:44:21 =======================================================
+20:44:26 
+  Creando tablas materializadas...
+20:44:27     ============================================================
+20:44:27     Creando tablas materializadas para RUB Dashboard
+20:44:27     DB: localhost/rub
+20:44:27     ============================================================
+20:44:27     
+20:44:27     Limpiando tablas y MVs existentes...
+20:44:27   Error creando matviews (exit 1):
+20:44:27     Traceback (most recent call last):
+20:44:27       File "/Users/fede/repos/rub-dashboard/create_matviews.py", line 334, in <module>
+20:44:27         run()
+20:44:27       File "/Users/fede/repos/rub-dashboard/create_matviews.py", line 270, in run
+20:44:27         cur.execute("SELECT DISTINCT periodo_mes FROM benefits ORDER BY 1")
+20:44:27     psycopg2.errors.UndefinedTable: relation "benefits" does not exist
+20:44:27     LINE 1: SELECT DISTINCT periodo_mes FROM benefits ORDER BY 1
+20:44:27                                              ^
+20:44:37 
+  Creando tablas materializadas...
+20:44:37     ============================================================
+20:44:37     Creando tablas materializadas para RUB Dashboard
+20:44:37     DB: localhost/rub
+20:44:37     ============================================================
+20:44:37     
+20:44:37     Limpiando tablas y MVs existentes...
+20:44:37   Error creando matviews (exit 1):
+20:44:37     Traceback (most recent call last):
+20:44:37       File "/Users/fede/repos/rub-dashboard/create_matviews.py", line 334, in <module>
+20:44:37         run()
+20:44:37       File "/Users/fede/repos/rub-dashboard/create_matviews.py", line 270, in run
+20:44:37         cur.execute("SELECT DISTINCT periodo_mes FROM benefits ORDER BY 1")
+20:44:37     psycopg2.errors.UndefinedTable: relation "benefits" does not exist
+20:44:37     LINE 1: SELECT DISTINCT periodo_mes FROM benefits ORDER BY 1
+20:44:37                                              ^
+20:45:31 
+  Hasta luego.
+

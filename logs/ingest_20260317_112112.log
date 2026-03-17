@@ -1,0 +1,13 @@
+11:21:12 
+=======================================================
+11:21:12   RUB — Ingesta de Datasets
+11:21:12   DB: localhost/rub
+11:21:12   Log: /Users/fede/repos/rub-dashboard/logs/ingest_20260317_112112.log
+11:21:12 =======================================================
+11:21:15 
+  Creando tablas materializadas...
+
+11:21:15   Error creando matviews (exit 1)
+11:21:48 
+  Creando tablas materializadas...
+

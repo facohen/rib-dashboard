@@ -23,8 +23,8 @@ instance/
 .vscode/
 .idea/
 
-# Datasets
-datasets/
+# Cache
+.cache/
 
 # OS
 .DS_Store

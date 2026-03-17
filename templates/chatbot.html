@@ -3,6 +3,7 @@
 
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <style>
     .chat-container {
         display: flex;
@@ -503,11 +504,13 @@
     }
 
     // ── Add bubble ──
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
     function addBubble(role, content) {
         const bubble = document.createElement('div');
         bubble.className = 'chat-bubble ' + role;
         if (role === 'assistant') {
-            bubble.innerHTML = marked.parse(content);
+            bubble.innerHTML = DOMPurify.sanitize(marked.parse(content));
         } else {
             bubble.textContent = content;
         }
@@ -579,7 +582,7 @@
         try {
             const resp = await fetch('/api/chatbot/ask', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
                 body: JSON.stringify({
                     message: text,
                     history: chatHistory.slice(-10)
@@ -657,7 +660,7 @@
                             messagesEl.insertBefore(assistantBubble, typingEl);
                         }
 
-                        assistantBubble.innerHTML = marked.parse(fullText);
+                        assistantBubble.innerHTML = DOMPurify.sanitize(marked.parse(fullText));
                         scrollToBottom();
 
                         if (data.done) {

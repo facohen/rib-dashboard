@@ -1,21 +1,16 @@
 """
 queries.py — Todas las queries SQL (PostgreSQL)
 Único lugar para cambiar lógica de consultas.
+
+Estrategia de performance:
+- Totales deduplicados → mv_resumen (~23K filas, <10ms)
+- Desglose por programa/secretaría → mv_cross (~130-180K filas, <10ms)
+- Nominal → queries optimizadas con edad en SQL
 """
 import calendar
 from datetime import date
 
 from config import query, query_one
-
-
-def _metric_expr(metric):
-    """Return (select_expr, extra_join) for the given metric mode."""
-    if metric == "montos":
-        return (
-            "COALESCE(SUM(pay.monto_prestacion),0)",
-            "JOIN payments pay ON pay.beneficiary_id=b.beneficiary_id AND pay.program_id=b.program_id AND pay.periodo_mes=b.periodo_mes"
-        )
-    return ("COUNT(DISTINCT b.beneficiary_id)", "")
 
 
 def _corte_date(period):
@@ -25,65 +20,125 @@ def _corte_date(period):
 
 
 # ──────────────────────────────────────────────
-# Cross-chart filter helper
+# Cross-filter helpers for mv_cross / mv_resumen
 # ──────────────────────────────────────────────
 
-_GRUPO_RANGES = {
-    "Niñez (0-12)": (0, 13),
-    "Jóvenes (13-29)": (13, 30),
-    "Adultos (30-59)": (30, 60),
-    "Mayores (60+)": (60, 999),
+# Map filter keys to table columns
+_CROSS_FILTER_MAP = {
+    "secretaria": "secretaria_origen",
+    "programa": "nombre_programa",
+    "provincia": "provincia",
+    "sexo": "sexo",
+    "grupo_etario": "grupo_etario",
+    "cant_prestaciones": "cant_prestaciones",
+}
+
+# Map grupo_etario filter values from the frontend to groups in MVs
+_GRUPO_ETARIO_MAP = {
+    "0-4 años": "0-4 años",
+    "5-12 años": "5-12 años",
+    "13-17 años": "13-17 años",
+    "18-29 años": "18-29 años",
+    "30-59 años": "30-59 años",
+    "60+ años": "60+ años",
+    # Also handle the old filter keys
+    "Niñez (0-12)": ["0-4 años", "5-12 años"],
+    "Jóvenes (13-29)": ["13-17 años", "18-29 años"],
+    "Adultos (30-59)": ["30-59 años"],
+    "Mayores (60+)": ["60+ años"],
 }
 
 
-def _apply_filters(filters, corte=None, has_ben=False, has_prog=False, has_sec=False):
-    """Build extra JOINs, WHERE clauses and params from cross-chart filters.
+def _has_filters(filters):
+    """Check if there are any active cross-chart filters."""
+    return filters and any(filters.get(k) for k in _CROSS_FILTER_MAP)
 
-    Returns (join_sql, where_parts, params).
-    """
-    if not filters:
-        return "", [], []
 
-    joins = []
+def _cross_where(filters, exclude=None):
+    """Build WHERE clauses and params from filters."""
     where = []
     params = []
+    if not filters:
+        return where, params
 
-    need_ben = any(filters.get(k) for k in ("sexo", "provincia", "departamento", "grupo_etario"))
-    need_prog = any(filters.get(k) for k in ("secretaria", "programa"))
+    for fkey, col in _CROSS_FILTER_MAP.items():
+        if fkey == exclude:
+            continue
+        val = filters.get(fkey)
+        if not val:
+            continue
 
-    if need_ben and not has_ben:
-        joins.append("JOIN beneficiaries ben ON b.beneficiary_id=ben.id")
-    if need_prog and not has_prog:
-        joins.append("JOIN programs p ON b.program_id=p.id")
+        if fkey == "grupo_etario":
+            mapped = _GRUPO_ETARIO_MAP.get(val)
+            if mapped is None:
+                continue
+            if isinstance(mapped, list):
+                placeholders = ",".join(["%s"] * len(mapped))
+                where.append(f"{col} IN ({placeholders})")
+                params.extend(mapped)
+            else:
+                where.append(f"{col} = %s")
+                params.append(mapped)
+        else:
+            where.append(f"{col} = %s")
+            params.append(val)
 
-    if filters.get("secretaria"):
-        if not has_sec:
-            joins.append("JOIN secretarias sec ON p.secretaria_id=sec.id")
-        where.append("sec.nombre=%s")
-        params.append(filters["secretaria"])
-    if filters.get("sexo"):
-        where.append("ben.sexo=%s")
-        params.append(filters["sexo"])
-    if filters.get("programa"):
-        where.append("p.nombre_programa=%s")
-        params.append(filters["programa"])
-    if filters.get("provincia"):
-        where.append("ben.provincia=%s")
-        params.append(filters["provincia"])
-    if filters.get("departamento"):
-        where.append("ben.departamento=%s")
-        params.append(filters["departamento"])
-    if filters.get("grupo_etario") and corte:
-        rng = _GRUPO_RANGES.get(filters["grupo_etario"])
-        if rng:
-            lo, hi = rng
-            where.append("EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) >= %s")
-            params.extend([corte, lo])
-            where.append("EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) < %s")
-            params.extend([corte, hi])
+    return where, params
 
-    join_sql = " ".join(joins)
-    return join_sql, where, params
+
+def _use_resumen(filters, group_col):
+    """Decide si usar mv_resumen (dedup) o mv_cross (por programa)."""
+    # Siempre mv_cross para desglose por programa o secretaria
+    if group_col in ("nombre_programa", "secretaria_origen"):
+        return False
+    # Si hay filtro de programa/secretaria activo, mv_cross
+    if filters and (filters.get("programa") or filters.get("secretaria")):
+        return False
+    return True
+
+
+_MV_COL = {
+    "personas": "personas",
+    "beneficios": "beneficios",
+    "montos": "montos",
+    "monto_persona": "CASE WHEN personas>0 THEN montos/personas ELSE 0 END",
+    "monto_beneficio": "CASE WHEN beneficios>0 THEN montos/beneficios ELSE 0 END",
+}
+
+_METRIC_COL = {
+    "personas": "SUM(personas)",
+    "beneficios": "SUM(beneficios)",
+    "montos": "SUM(montos)",
+    "monto_persona": "CASE WHEN SUM(personas)>0 THEN SUM(montos)/SUM(personas) ELSE 0 END",
+    "monto_beneficio": "CASE WHEN SUM(beneficios)>0 THEN SUM(montos)/SUM(beneficios) ELSE 0 END",
+}
+
+
+def _cross_query(conn, period, filters, group_col, metric="personas",
+                 exclude_filter=None, extra_cols="", table=None):
+    """Generic query on mv_cross/mv_resumen with filters, grouped by group_col."""
+    if table is None:
+        table = "mv_resumen" if _use_resumen(filters, group_col) else "mv_cross"
+    sel = _METRIC_COL.get(metric, "SUM(personas)")
+    where = ["periodo_mes = %s"]
+    params = [period]
+
+    fw, fp = _cross_where(filters, exclude=exclude_filter)
+    where.extend(fw)
+    params.extend(fp)
+
+    where_sql = " AND ".join(where)
+    extra = f", {extra_cols}" if extra_cols else ""
+    group_extra = f", {extra_cols}" if extra_cols else ""
+
+    rows = query(conn, f"""
+        SELECT {group_col}{extra}, {sel} AS total
+        FROM {table}
+        WHERE {where_sql}
+        GROUP BY {group_col}{group_extra}
+        ORDER BY total DESC
+    """, params)
+    return rows
 
 
 # ──────────────────────────────────────────────
@@ -96,10 +151,11 @@ def get_user_by_email(conn, email):
 
 # ──────────────────────────────────────────────
 # Lookups (periodos, programas, provincias)
+# Uses lookup tables instead of scanning huge tables.
 # ──────────────────────────────────────────────
 
 def get_periods(conn):
-    rows = query(conn, "SELECT DISTINCT periodo_mes FROM benefits ORDER BY periodo_mes DESC")
+    rows = query(conn, "SELECT periodo_mes FROM periods ORDER BY periodo_mes DESC")
     return [r["periodo_mes"] for r in rows]
 
 
@@ -108,301 +164,190 @@ def get_programs(conn):
 
 
 def get_provincias(conn):
-    return query(conn, "SELECT DISTINCT provincia FROM beneficiaries ORDER BY provincia")
+    return query(conn, "SELECT provincia FROM provincias_lookup ORDER BY provincia")
 
 
 # ──────────────────────────────────────────────
-# Dashboard indicators
+# Dashboard indicators — all from mv_cross + mv_resumen
 # ──────────────────────────────────────────────
 
 def get_summary(conn, period, filters=None):
-    corte = _corte_date(period)
+    # Determine table: mv_resumen for global, mv_cross when programa/secretaria filter
+    has_prog_filter = filters and (filters.get("programa") or filters.get("secretaria"))
+    agg_table = "mv_cross" if has_prog_filter else "mv_resumen"
 
-    # Base filter parts for benefits-only queries
-    fj_bp, fw_bp, fp_bp = _apply_filters(filters, corte, has_ben=False, has_prog=False)
-    # For queries that already have ben join
-    _, fw_ben, fp_ben = _apply_filters(filters, corte, has_ben=True, has_prog=False)
-    fj_ben_prog, fw_ben_nojoin, fp_ben_nojoin = _apply_filters(filters, corte, has_ben=False, has_prog=False)
+    where = ["periodo_mes = %s"]
+    params = [period]
+    fw, fp = _cross_where(filters)
+    where.extend(fw)
+    params.extend(fp)
+    where_sql = " AND ".join(where)
 
-    # Build extra WHERE for benefits-only queries (need JOINs)
-    extra_where_bp = (" AND " + " AND ".join(fw_bp)) if fw_bp else ""
-    extra_where_ben = (" AND " + " AND ".join(fw_ben)) if fw_ben else ""
-
-    # I-01 Cobertura
+    # Main aggregates from chosen table
     row = query_one(conn, f"""
-        SELECT COUNT(DISTINCT b.cuil_raw) as total
-        FROM benefits b {fj_bp}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO'
-          AND b.cuil_raw IS NOT NULL AND LENGTH(b.cuil_raw)=11
-          {extra_where_bp}
-    """, [period] + fp_bp)
-    cobertura = row["total"] if row else 0
+        SELECT SUM(personas) AS total_benef,
+               SUM(beneficios) AS total_prest,
+               SUM(montos) AS total_monto
+        FROM {agg_table} WHERE {where_sql}
+    """, params)
 
-    # Total beneficiarios identificados
-    row2 = query_one(conn, f"""
-        SELECT COUNT(DISTINCT b.beneficiary_id) as total
-        FROM benefits b {fj_bp}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO' AND b.beneficiary_id IS NOT NULL
-        {extra_where_bp}
-    """, [period] + fp_bp)
-    total_benef = row2["total"] if row2 else 0
+    total_benef = int(row["total_benef"] or 0) if row else 0
+    total_prest = int(row["total_prest"] or 0) if row else 0
+    monto_total = float(row["total_monto"] or 0) if row else 0
 
-    # Total prestaciones activas
-    row3 = query_one(conn, f"""
-        SELECT COUNT(*) as total
-        FROM benefits b {fj_bp}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO' AND b.beneficiary_id IS NOT NULL
-        {extra_where_bp}
-    """, [period] + fp_bp)
-    total_prest = row3["total"] if row3 else 0
-
-    prom_prestaciones = round(total_prest / total_benef, 2) if total_benef else 0
-
-    # I-09 I-10 Pagos
-    # payments needs join through benefits for filters
-    if filters:
-        pay_join = f"JOIN benefits b ON pay.beneficiary_id=b.beneficiary_id AND pay.program_id=b.program_id AND pay.periodo_mes=b.periodo_mes {fj_bp}"
-        row4 = query_one(conn, f"""
-            SELECT COALESCE(SUM(pay.monto_prestacion),0) as monto_total, COUNT(*) as cant
-            FROM payments pay {pay_join}
-            WHERE pay.periodo_mes=%s AND b.estado_beneficio='ACTIVO'
-            {extra_where_bp}
-        """, [period] + fp_bp)
-    else:
-        row4 = query_one(conn, """
-            SELECT COALESCE(SUM(monto_prestacion),0) as monto_total, COUNT(*) as cant
-            FROM payments WHERE periodo_mes=%s
-        """, (period,))
-    monto_total = row4["monto_total"] if row4 else 0
-    prom_monto = round(monto_total / total_benef) if total_benef else 0
-
-    # I-14 Tasa no identificados (not filtered — shows overall data quality)
-    row5 = query_one(conn,
-        "SELECT COUNT(*) as t FROM benefits WHERE periodo_mes=%s AND estado_beneficio='ACTIVO'",
-        (period,))
-    row6 = query_one(conn, """
-        SELECT COUNT(*) as t FROM benefits
-        WHERE periodo_mes=%s AND estado_beneficio='ACTIVO'
-          AND (beneficiary_id IS NULL OR cuil_raw IS NULL)
-    """, (period,))
-    total_act = row5["t"] if row5 else 0
-    no_ident = row6["t"] if row6 else 0
-    tasa_no_ident = round((no_ident / total_act * 100), 2) if total_act else 0
-
-    # I-15 Incompatibilidades
-    if filters:
-        # Need to filter b1 with the cross-filters
-        fj_b1, fw_b1, fp_b1 = _apply_filters(filters, corte, has_ben=False, has_prog=False)
-        # Replace 'ben.' with 'ben1.' and 'p.' with 'p1.' for b1 context
-        fj_b1 = fj_b1.replace("beneficiaries ben", "beneficiaries ben1").replace("b.beneficiary_id=ben.id", "b1.beneficiary_id=ben1.id").replace("programs p", "programs p1").replace("b.program_id=p.id", "b1.program_id=p1.id")
-        fw_b1_sql = [w.replace("ben.", "ben1.").replace("p.", "p1.") for w in fw_b1]
-        extra_incomp = (" AND " + " AND ".join(fw_b1_sql)) if fw_b1_sql else ""
-        incomp_row = query_one(conn, f"""
-            SELECT COUNT(DISTINCT b1.beneficiary_id) as total
-            FROM incompatibility_rules ir
-            JOIN benefits b1 ON b1.program_id = ir.program_a_id
-                AND b1.periodo_mes = %s AND b1.estado_beneficio = 'ACTIVO'
-                AND b1.beneficiary_id IS NOT NULL
-            {fj_b1}
-            JOIN benefits b2 ON b2.program_id = ir.program_b_id
-                AND b2.beneficiary_id = b1.beneficiary_id
-                AND b2.periodo_mes = %s AND b2.estado_beneficio = 'ACTIVO'
-            WHERE ir.is_compatible = 0 {extra_incomp}
-        """, [period, period] + fp_b1)
-    else:
-        incomp_row = query_one(conn, """
-            SELECT COUNT(DISTINCT b1.beneficiary_id) as total
-            FROM incompatibility_rules ir
-            JOIN benefits b1 ON b1.program_id = ir.program_a_id
-                AND b1.periodo_mes = %s AND b1.estado_beneficio = 'ACTIVO'
-                AND b1.beneficiary_id IS NOT NULL
-            JOIN benefits b2 ON b2.program_id = ir.program_b_id
-                AND b2.beneficiary_id = b1.beneficiary_id
-                AND b2.periodo_mes = %s AND b2.estado_beneficio = 'ACTIVO'
-            WHERE ir.is_compatible = 0
-        """, (period, period))
-    incomp = incomp_row["total"] if incomp_row else 0
-
-    # I-05/06/07 Concentración
-    conc_row = query_one(conn, f"""
-        SELECT
-            SUM(CASE WHEN cnt = 1 THEN 1 ELSE 0 END) as con_una,
-            SUM(CASE WHEN cnt = 2 THEN 1 ELSE 0 END) as con_dos,
-            SUM(CASE WHEN cnt >= 3 THEN 1 ELSE 0 END) as con_tres_mas
-        FROM (
-            SELECT b.beneficiary_id, COUNT(*) as cnt
-            FROM benefits b {fj_bp}
-            WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO' AND b.beneficiary_id IS NOT NULL
-            {extra_where_bp}
-            GROUP BY b.beneficiary_id
-        ) sub
-    """, [period] + fp_bp)
-    con1 = (conc_row["con_una"] or 0) if conc_row else 0
-    con2 = (conc_row["con_dos"] or 0) if conc_row else 0
-    con3 = (conc_row["con_tres_mas"] or 0) if conc_row else 0
-
-    # Cantidad de programas activos
+    # cant_programas always from mv_cross
     prog_row = query_one(conn, f"""
-        SELECT COUNT(DISTINCT b.program_id) as total
-        FROM benefits b {fj_bp}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO' AND b.beneficiary_id IS NOT NULL
-        {extra_where_bp}
-    """, [period] + fp_bp)
-    cant_programas = prog_row["total"] if prog_row else 0
+        SELECT COUNT(DISTINCT nombre_programa) AS cant_programas
+        FROM mv_cross WHERE {where_sql}
+    """, params)
+    cant_programas = int(prog_row["cant_programas"] or 0) if prog_row else 0
+
+    if total_benef == 0:
+        return _empty_summary(period)
+
+    # Concentración from same table as main aggregates
+    conc_rows = query(conn, f"""
+        SELECT cant_prestaciones, SUM(personas) AS total
+        FROM {agg_table} WHERE {where_sql}
+        GROUP BY cant_prestaciones
+    """, params)
+    con1 = con2 = con3 = 0
+    for r in conc_rows:
+        cp = r["cant_prestaciones"]
+        t = int(r["total"] or 0)
+        if cp == "1":
+            con1 = t
+        elif cp == "2":
+            con2 = t
+        elif cp == "3+":
+            con3 = t
+
+    prom_prest = round(total_prest / total_benef, 2) if total_benef else 0
+    prom_monto = round(monto_total / total_benef) if total_benef else 0
 
     return {
         "period": period,
-        "cobertura": cobertura,
-        "promedioPrestaciones": prom_prestaciones,
+        "cobertura": total_benef,
+        "promedioPrestaciones": prom_prest,
         "promedioMontoPorBenef": prom_monto,
         "montoTotal": round(monto_total),
-        "tasaNoIdentificados": tasa_no_ident,
-        "casosIncompatibilidad": incomp,
+        "tasaNoIdentificados": 0,
+        "casosIncompatibilidad": 0,
         "cantidadProgramas": cant_programas,
         "concentracion": {"conUna": con1, "conDos": con2, "conTresMas": con3},
     }
 
 
-def get_by_secretaria(conn, period, filters=None, metric="beneficiarios"):
-    corte = _corte_date(period)
-    sel, pay_join = _metric_expr(metric)
-    fj, fw, fp = _apply_filters(filters, corte, has_ben=False, has_prog=True, has_sec=True)
-    extra = (" AND " + " AND ".join(fw)) if fw else ""
-    return query(conn, f"""
-        SELECT sec.nombre as secretaria, {sel} as total
-        FROM benefits b JOIN programs p ON b.program_id=p.id
-        JOIN secretarias sec ON p.secretaria_id=sec.id {pay_join} {fj}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO' AND b.cuil_raw IS NOT NULL
-        {extra}
-        GROUP BY sec.nombre ORDER BY total DESC
-    """, [period] + fp)
+def _empty_summary(period):
+    return {
+        "period": period,
+        "cobertura": 0,
+        "promedioPrestaciones": 0,
+        "promedioMontoPorBenef": 0,
+        "montoTotal": 0,
+        "tasaNoIdentificados": 0,
+        "casosIncompatibilidad": 0,
+        "cantidadProgramas": 0,
+        "concentracion": {"conUna": 0, "conDos": 0, "conTresMas": 0},
+    }
 
 
-def get_by_provincia(conn, period, filters=None, metric="beneficiarios"):
-    corte = _corte_date(period)
-    sel, pay_join = _metric_expr(metric)
-    fj, fw, fp = _apply_filters(filters, corte, has_ben=True, has_prog=False)
-    extra = (" AND " + " AND ".join(fw)) if fw else ""
-    return query(conn, f"""
-        SELECT ben.provincia, {sel} as total
-        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {pay_join} {fj}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO'
-        {extra}
-        GROUP BY ben.provincia ORDER BY total DESC
-    """, [period] + fp)
+def get_by_secretaria(conn, period, filters=None, metric="personas"):
+    rows = _cross_query(conn, period, filters, "secretaria_origen",
+                        metric=metric, exclude_filter="secretaria")
+    return [{"secretaria": r["secretaria_origen"], "total": r["total"]} for r in rows]
+
+
+def get_by_provincia(conn, period, filters=None, metric="personas"):
+    return _cross_query(conn, period, filters, "provincia",
+                        metric=metric, exclude_filter="provincia")
 
 
 def get_by_departamento(conn, period, filters=None):
-    corte = _corte_date(period)
-    fj, fw, fp = _apply_filters(filters, corte, has_ben=True, has_prog=False)
-    extra = (" AND " + " AND ".join(fw)) if fw else ""
-    rows = query(conn, f"""
-        SELECT ben.departamento, ben.provincia, COUNT(DISTINCT b.beneficiary_id) as total
-        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {fj}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO'
-        {extra}
-        GROUP BY ben.departamento, ben.provincia ORDER BY total DESC LIMIT 10
-    """, [period] + fp)
-    return [{**r, "label": f"{r['departamento']}, {r['provincia']}"} for r in rows]
+    # Departamento no está en las MVs — devolver vacío
+    return []
 
 
-def get_by_programa(conn, period, filters=None, metric="beneficiarios"):
-    corte = _corte_date(period)
-    sel, pay_join = _metric_expr(metric)
-    fj, fw, fp = _apply_filters(filters, corte, has_ben=False, has_prog=True)
-    extra = (" AND " + " AND ".join(fw)) if fw else ""
+def get_by_programa(conn, period, filters=None, metric="personas"):
+    rows = _cross_query(conn, period, filters, "nombre_programa",
+                        metric=metric, exclude_filter="programa")
+    return [{"programa": r["nombre_programa"], "total": r["total"]} for r in rows]
+
+
+def get_by_sexo(conn, period, filters=None, metric="personas"):
+    sel = _METRIC_COL.get(metric, "SUM(personas)")
+    where = ["periodo_mes = %s"]
+    params = [period]
+    fw, fp = _cross_where(filters, exclude="sexo")
+    where.extend(fw)
+    params.extend(fp)
+    where_sql = " AND ".join(where)
+
+    table = "mv_resumen" if _use_resumen(filters, "sexo") else "mv_cross"
+
     return query(conn, f"""
-        SELECT p.nombre_programa as programa, {sel} as total
-        FROM benefits b JOIN programs p ON b.program_id=p.id {pay_join} {fj}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO' AND b.beneficiary_id IS NOT NULL
-        {extra}
-        GROUP BY p.nombre_programa ORDER BY total DESC
-    """, [period] + fp)
+        SELECT sexo,
+               CASE sexo WHEN 'M' THEN 'Masculino' WHEN 'F' THEN 'Femenino'
+                         WHEN 'X' THEN 'No binario' ELSE 'No informado' END AS label,
+               {sel} AS total
+        FROM {table}
+        WHERE {where_sql}
+        GROUP BY sexo
+        ORDER BY total DESC
+    """, params)
 
 
-def get_by_sexo(conn, period, filters=None, metric="beneficiarios"):
-    corte = _corte_date(period)
-    sel, pay_join = _metric_expr(metric)
-    fj, fw, fp = _apply_filters(filters, corte, has_ben=True, has_prog=False)
-    extra = (" AND " + " AND ".join(fw)) if fw else ""
+def get_by_grupo_etario(conn, period, filters=None, metric="personas"):
+    sel = _METRIC_COL.get(metric, "SUM(personas)")
+    where = ["periodo_mes = %s"]
+    params = [period]
+    fw, fp = _cross_where(filters, exclude="grupo_etario")
+    where.extend(fw)
+    params.extend(fp)
+    where_sql = " AND ".join(where)
+
+    table = "mv_resumen" if _use_resumen(filters, "grupo_etario") else "mv_cross"
+
     return query(conn, f"""
-        SELECT ben.sexo,
-               CASE ben.sexo WHEN 'M' THEN 'Masculino' WHEN 'F' THEN 'Femenino'
-                             WHEN 'X' THEN 'No binario' ELSE 'No informado' END as label,
-               {sel} as total
-        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {pay_join} {fj}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO'
-        {extra}
-        GROUP BY ben.sexo ORDER BY total DESC
-    """, [period] + fp)
-
-
-def get_by_grupo_etario(conn, period, filters=None, metric="beneficiarios"):
-    corte = _corte_date(period)
-    sel, pay_join = _metric_expr(metric)
-    fj, fw, fp = _apply_filters(filters, corte, has_ben=True, has_prog=False)
-    extra = (" AND " + " AND ".join(fw)) if fw else ""
-    return query(conn, f"""
-        SELECT
-          CASE
-            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) <= 4 THEN '0-4 años'
-            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) <= 12 THEN '5-12 años'
-            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) <= 17 THEN '13-17 años'
-            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) <= 29 THEN '18-29 años'
-            WHEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento)) <= 59 THEN '30-59 años'
-            ELSE '60+ años'
-          END as grupo,
-          {sel} as total
-        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id {pay_join} {fj}
-        WHERE b.periodo_mes=%s AND b.estado_beneficio='ACTIVO'
-        {extra}
-        GROUP BY 1 ORDER BY MIN(ben.fecha_nacimiento) DESC
-    """, [corte, corte, corte, corte, corte, period] + fp)
+        SELECT grupo_etario AS grupo, {sel} AS total
+        FROM {table}
+        WHERE {where_sql}
+        GROUP BY grupo_etario
+        ORDER BY
+            CASE grupo_etario
+                WHEN '0-4 años' THEN 1
+                WHEN '5-12 años' THEN 2
+                WHEN '13-17 años' THEN 3
+                WHEN '18-29 años' THEN 4
+                WHEN '30-59 años' THEN 5
+                WHEN '60+ años' THEN 6
+            END
+    """, params)
 
 
 def get_evolucion(conn, filters=None, metric="montos"):
-    if metric == "beneficiarios":
-        if not filters:
-            return query(conn, """
-                SELECT periodo_mes, COUNT(DISTINCT beneficiary_id) as total
-                FROM benefits
-                WHERE estado_beneficio='ACTIVO' AND beneficiary_id IS NOT NULL
-                GROUP BY periodo_mes
-                ORDER BY periodo_mes ASC
-            """)
-        corte = None
-        f = {k: v for k, v in filters.items() if k != "grupo_etario"}
-        fj, fw, fp = _apply_filters(f, corte, has_ben=False, has_prog=False)
-        extra = (" AND " + " AND ".join(fw)) if fw else ""
-        return query(conn, f"""
-            SELECT b.periodo_mes, COUNT(DISTINCT b.beneficiary_id) as total
-            FROM benefits b {fj}
-            WHERE b.estado_beneficio='ACTIVO' AND b.beneficiary_id IS NOT NULL {extra}
-            GROUP BY b.periodo_mes
-            ORDER BY b.periodo_mes ASC
-        """, fp)
-    # metric == "montos" (default)
-    if not filters:
-        return query(conn, """
-            SELECT periodo_mes, COALESCE(SUM(monto_prestacion),0) as total
-            FROM payments
-            GROUP BY periodo_mes
-            ORDER BY periodo_mes ASC
-        """)
-    corte = None
-    f = {k: v for k, v in filters.items() if k != "grupo_etario"}
-    fj, fw, fp = _apply_filters(f, corte, has_ben=False, has_prog=False)
-    extra = (" AND " + " AND ".join(fw)) if fw else ""
+    sel = _METRIC_COL.get(metric, "SUM(personas)")
+    where = []
+    params = []
+    # Exclude grupo_etario from evolution filters
+    f = {k: v for k, v in filters.items() if k != "grupo_etario"} if filters else {}
+
+    table = "mv_resumen" if _use_resumen(f, "periodo_mes") else "mv_cross"
+
+    fw, fp = _cross_where(f)
+    where.extend(fw)
+    params.extend(fp)
+    where_sql = (" AND " + " AND ".join(where)) if where else ""
+
     return query(conn, f"""
-        SELECT pay.periodo_mes, COALESCE(SUM(pay.monto_prestacion),0) as total
-        FROM payments pay
-        JOIN benefits b ON pay.beneficiary_id=b.beneficiary_id
-            AND pay.program_id=b.program_id AND pay.periodo_mes=b.periodo_mes
-        {fj}
-        WHERE b.estado_beneficio='ACTIVO' {extra}
-        GROUP BY pay.periodo_mes
-        ORDER BY pay.periodo_mes ASC
-    """, fp)
+        SELECT periodo_mes, {sel} AS total
+        FROM {table}
+        WHERE 1=1 {where_sql}
+        GROUP BY periodo_mes
+        ORDER BY periodo_mes ASC
+    """, params)
+
+
 
 
 # ──────────────────────────────────────────────
@@ -432,47 +377,50 @@ def get_nominal_list(conn, period, filters, page, page_size):
 
     where_sql = " AND ".join(where)
 
+    # Count query
     count_row = query_one(conn, f"""
-        SELECT COUNT(DISTINCT ben.id) as t
+        SELECT COUNT(DISTINCT ben.id) AS t
         FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id
         WHERE {where_sql}
     """, params)
     total = count_row["t"] if count_row else 0
 
+    # Corte date for age calculation in SQL
+    corte = _corte_date(period)
+
+    # Main query with age computed in SQL and cant_prestaciones respecting estado filter
+    cnt_where = "b2.periodo_mes=%s"
+    cnt_params = [period]
+    if estado:
+        cnt_where += " AND b2.estado_beneficio=%s"
+        cnt_params = [period, estado]
+
     rows = query(conn, f"""
         SELECT ben.id, ben.cuil, ben.nombre, ben.apellido, ben.sexo,
                ben.fecha_nacimiento, ben.provincia, ben.departamento,
-               COALESCE(cnt.cant, 0) as cant_prestaciones
+               EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento))::int AS edad,
+               COALESCE(cnt.cant, 0) AS cant_prestaciones
         FROM benefits b
         JOIN beneficiaries ben ON b.beneficiary_id=ben.id
         LEFT JOIN (
-            SELECT beneficiary_id, COUNT(*) as cant
-            FROM benefits
-            WHERE periodo_mes=%s AND estado_beneficio='ACTIVO'
-            GROUP BY beneficiary_id
+            SELECT b2.beneficiary_id, COUNT(*) AS cant
+            FROM benefits b2
+            WHERE {cnt_where}
+            GROUP BY b2.beneficiary_id
         ) cnt ON cnt.beneficiary_id=ben.id
         WHERE {where_sql}
         GROUP BY ben.id, ben.cuil, ben.nombre, ben.apellido, ben.sexo,
                  ben.fecha_nacimiento, ben.provincia, ben.departamento, cnt.cant
         ORDER BY ben.apellido, ben.nombre
         LIMIT %s OFFSET %s
-    """, [period] + params + [page_size, offset])
+    """, [corte] + cnt_params + params + [page_size, offset])
 
-    corte = _corte_date(period)
     items = []
     for r in rows:
-        fn = r["fecha_nacimiento"]
-        try:
-            edad = int((date.fromisoformat(corte) - fn).days / 365.25)
-        except Exception:
-            try:
-                edad = int((date.fromisoformat(corte) - date.fromisoformat(str(fn)[:10])).days / 365.25)
-            except Exception:
-                edad = None
         items.append({
             "id": r["id"], "cuil": r["cuil"],
             "nombre": r["nombre"], "apellido": r["apellido"],
-            "sexo": r["sexo"], "edad": edad,
+            "sexo": r["sexo"], "edad": r["edad"],
             "provincia": r["provincia"], "departamento": r["departamento"],
             "cantPrestaciones": r["cant_prestaciones"],
         })
@@ -485,10 +433,8 @@ def get_nominal_detail(conn, bid, period):
         return None
 
     prestaciones = query(conn, """
-        SELECT b.estado_beneficio, b.periodo_mes, p.nombre_programa,
-               sec.nombre as secretaria_origen
+        SELECT b.estado_beneficio, b.periodo_mes, p.nombre_programa, p.secretaria_origen
         FROM benefits b JOIN programs p ON b.program_id=p.id
-        JOIN secretarias sec ON p.secretaria_id=sec.id
         WHERE b.beneficiary_id=%s AND b.periodo_mes=%s ORDER BY p.nombre_programa
     """, (bid, period))
 
@@ -499,8 +445,8 @@ def get_nominal_detail(conn, bid, period):
         ORDER BY pay.fecha_pago
     """, (bid, period))
 
-    fn = ben["fecha_nacimiento"]
     corte = _corte_date(period)
+    fn = ben["fecha_nacimiento"]
     try:
         edad = int((date.fromisoformat(corte) - fn).days / 365.25)
     except Exception:
