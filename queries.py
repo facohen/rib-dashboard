@@ -354,6 +354,13 @@ def get_evolucion(conn, filters=None, metric="montos"):
 # Nominal
 # ──────────────────────────────────────────────
 
+def _use_mv_nominal(conn):
+    """Verifica si mv_nominal existe."""
+    r = query_one(conn, """SELECT 1 FROM information_schema.tables
+                           WHERE table_schema='public' AND table_name='mv_nominal'""")
+    return r is not None
+
+
 def get_nominal_list(conn, period, filters, page, page_size):
     cuil = filters.get("cuil", "")
     provincia = filters.get("provincia", "")
@@ -361,6 +368,59 @@ def get_nominal_list(conn, period, filters, page, page_size):
     sexo = filters.get("sexo", "")
     estado = filters.get("estado", "ACTIVO")
     offset = (page - 1) * page_size
+
+    if _use_mv_nominal(conn):
+        return _nominal_from_mv(conn, period, filters, page, page_size, offset)
+    return _nominal_from_raw(conn, period, filters, page, page_size, offset)
+
+
+def _nominal_from_mv(conn, period, filters, page, page_size, offset):
+    """Nominal desde mv_nominal — query directa sin JOINs."""
+    cuil = filters.get("cuil", "")
+    provincia = filters.get("provincia", "")
+    sexo = filters.get("sexo", "")
+
+    where = ["periodo_mes=%s"]
+    params = [period]
+    if provincia:
+        where.append("provincia=%s"); params.append(provincia)
+    if sexo:
+        where.append("sexo=%s"); params.append(sexo)
+    if cuil:
+        where.append("cuil LIKE %s"); params.append(f"{cuil}%")
+
+    where_sql = " AND ".join(where)
+
+    # COUNT + data en una query con window function
+    rows = query(conn, f"""
+        SELECT beneficiary_id AS id, cuil, nombre, apellido, sexo, edad,
+               provincia, departamento, cant_prestaciones, monto_total,
+               COUNT(*) OVER() AS _total
+        FROM mv_nominal
+        WHERE {where_sql}
+        ORDER BY apellido, nombre
+        LIMIT %s OFFSET %s
+    """, params + [page_size, offset])
+
+    total = rows[0]["_total"] if rows else 0
+    items = [{
+        "id": r["id"], "cuil": r["cuil"],
+        "nombre": r["nombre"], "apellido": r["apellido"],
+        "sexo": r["sexo"], "edad": r["edad"],
+        "provincia": r["provincia"], "departamento": r["departamento"],
+        "cantPrestaciones": r["cant_prestaciones"],
+        "montoTotal": float(r["monto_total"]) if r["monto_total"] else 0,
+    } for r in rows]
+    return {"items": items, "total": total, "page": page, "pageSize": page_size}
+
+
+def _nominal_from_raw(conn, period, filters, page, page_size, offset):
+    """Fallback: nominal desde tablas raw (cuando mv_nominal no existe)."""
+    cuil = filters.get("cuil", "")
+    provincia = filters.get("provincia", "")
+    programa_id = filters.get("programa", "")
+    sexo = filters.get("sexo", "")
+    estado = filters.get("estado", "ACTIVO")
 
     where = ["b.periodo_mes=%s"]
     params = [period]
@@ -376,54 +436,31 @@ def get_nominal_list(conn, period, filters, page, page_size):
         where.append("b.program_id=%s"); params.append(programa_id)
 
     where_sql = " AND ".join(where)
-
-    # Count query
-    count_row = query_one(conn, f"""
-        SELECT COUNT(DISTINCT ben.id) AS t
-        FROM benefits b JOIN beneficiaries ben ON b.beneficiary_id=ben.id
-        WHERE {where_sql}
-    """, params)
-    total = count_row["t"] if count_row else 0
-
-    # Corte date for age calculation in SQL
     corte = _corte_date(period)
-
-    # Main query with age computed in SQL and cant_prestaciones respecting estado filter
-    cnt_where = "b2.periodo_mes=%s"
-    cnt_params = [period]
-    if estado:
-        cnt_where += " AND b2.estado_beneficio=%s"
-        cnt_params = [period, estado]
 
     rows = query(conn, f"""
         SELECT ben.id, ben.cuil, ben.nombre, ben.apellido, ben.sexo,
-               ben.fecha_nacimiento, ben.provincia, ben.departamento,
                EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento))::int AS edad,
-               COALESCE(cnt.cant, 0) AS cant_prestaciones
+               ben.provincia, ben.departamento,
+               COUNT(*) AS cant_prestaciones,
+               COUNT(*) OVER() AS _total
         FROM benefits b
         JOIN beneficiaries ben ON b.beneficiary_id=ben.id
-        LEFT JOIN (
-            SELECT b2.beneficiary_id, COUNT(*) AS cant
-            FROM benefits b2
-            WHERE {cnt_where}
-            GROUP BY b2.beneficiary_id
-        ) cnt ON cnt.beneficiary_id=ben.id
         WHERE {where_sql}
         GROUP BY ben.id, ben.cuil, ben.nombre, ben.apellido, ben.sexo,
-                 ben.fecha_nacimiento, ben.provincia, ben.departamento, cnt.cant
+                 ben.fecha_nacimiento, ben.provincia, ben.departamento
         ORDER BY ben.apellido, ben.nombre
         LIMIT %s OFFSET %s
-    """, [corte] + cnt_params + params + [page_size, offset])
+    """, [corte] + params + [page_size, offset])
 
-    items = []
-    for r in rows:
-        items.append({
-            "id": r["id"], "cuil": r["cuil"],
-            "nombre": r["nombre"], "apellido": r["apellido"],
-            "sexo": r["sexo"], "edad": r["edad"],
-            "provincia": r["provincia"], "departamento": r["departamento"],
-            "cantPrestaciones": r["cant_prestaciones"],
-        })
+    total = rows[0]["_total"] if rows else 0
+    items = [{
+        "id": r["id"], "cuil": r["cuil"],
+        "nombre": r["nombre"], "apellido": r["apellido"],
+        "sexo": r["sexo"], "edad": r["edad"],
+        "provincia": r["provincia"], "departamento": r["departamento"],
+        "cantPrestaciones": r["cant_prestaciones"],
+    } for r in rows]
     return {"items": items, "total": total, "page": page, "pageSize": page_size}
 
 

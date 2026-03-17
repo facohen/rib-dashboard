@@ -35,15 +35,9 @@ from psycopg2.extras import execute_values
 from ingest_config import DATASET_CONFIGS, DATASETS_ROOT, PROVINCIA_NORMALIZE
 from ingest_log import setup_logger, log_report
 
-from config import load_dotenv
-load_dotenv()
-
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError(
-        "DATABASE_URL no está seteada. Exportala antes de iniciar:\n"
-        "  export DATABASE_URL=postgresql://user:pass@host/rub"
-    )
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://postgres:postgres@localhost/rub"
+)
 CHUNK_SIZE = 200_000
 BATCH_SIZE = 10_000
 MAX_ROWS = 50_000  # 0 = sin límite; >0 = cortar después de N filas (modo test)
@@ -693,20 +687,21 @@ def truncate_periodo(conn, periodo):
 def db_summary(conn):
     cur = conn.cursor()
     tables = [
-        "programs", "beneficiaries", "benefits", "payments",
-        "incompatibility_rules", "users", "secretarias",
+        ("secretarias", "SELECT COUNT(*) FROM secretarias"),
+        ("programs", "SELECT COUNT(*) FROM programs"),
+        ("beneficiaries", "SELECT COUNT(*) FROM beneficiaries"),
+        ("benefits", "SELECT COUNT(*) FROM benefits"),
+        ("payments", "SELECT COUNT(*) FROM payments"),
+        ("incompatibility_rules", "SELECT COUNT(*) FROM incompatibility_rules"),
+        ("users", "SELECT COUNT(*) FROM users"),
     ]
     log.info("\n  Estado actual de la base de datos:")
     log.info(f"  {'Tabla':<25} {'Registros':>12}")
     log.info(f"  {'-'*25} {'-'*12}")
-    for name in tables:
-        try:
-            cur.execute(f"SELECT COUNT(*) FROM {name}")
-            count = cur.fetchone()[0]
-            log.info(f"  {name:<25} {count:>12,}")
-        except Exception:
-            conn.rollback()
-            # Table doesn't exist (e.g. secretarias only in real-data schema)
+    for name, sql in tables:
+        cur.execute(sql)
+        count = cur.fetchone()[0]
+        log.info(f"  {name:<25} {count:>12,}")
 
     cur.execute("""
         SELECT periodo_mes, COUNT(*) FROM benefits
@@ -1055,305 +1050,6 @@ for _c in DATASET_CONFIGS:
 _log_path = None  # se setea en menu()
 
 
-# -------------------------------------------------------------
-# Pipeline helpers (matviews, redis, dashboard)
-# -------------------------------------------------------------
-
-def _create_matviews(conn):
-    """Ejecuta create_matviews.py como módulo."""
-    import subprocess
-    # Cerrar conexión del menú para liberar locks sobre las tablas
-    conn.close()
-    log.info("\n  Creando tablas materializadas...\n")
-    t0 = time.time()
-    proc = subprocess.Popen(
-        [sys.executable, "-u", "create_matviews.py"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
-        env={**os.environ, "DATABASE_URL": DATABASE_URL},
-    )
-    for line in proc.stdout:
-        print(f"    {line}", end="", flush=True)
-    proc.wait()
-    elapsed = time.time() - t0
-    if proc.returncode != 0:
-        log.error(f"  Error creando matviews (exit {proc.returncode})")
-    else:
-        log.info(f"  Matviews creadas en {elapsed:.1f}s")
-        _clear_cache()
-
-
-def _refresh_matviews(conn):
-    """Ejecuta refresh_matviews.py como módulo."""
-    import subprocess
-    conn.close()
-    log.info("\n  Refrescando tablas materializadas...\n")
-    t0 = time.time()
-    proc = subprocess.Popen(
-        [sys.executable, "-u", "refresh_matviews.py"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
-        env={**os.environ, "DATABASE_URL": DATABASE_URL},
-    )
-    for line in proc.stdout:
-        print(f"    {line}", end="", flush=True)
-    proc.wait()
-    elapsed = time.time() - t0
-    if proc.returncode != 0:
-        log.error(f"  Error refrescando matviews (exit {proc.returncode})")
-    else:
-        log.info(f"  Matviews refrescadas en {elapsed:.1f}s")
-        _clear_cache()
-
-
-def _clear_cache():
-    """Limpia FileSystemCache después de crear/refrescar MVs."""
-    import shutil
-    cache_dir = os.path.join(os.path.dirname(__file__), ".cache")
-    if os.path.isdir(cache_dir):
-        shutil.rmtree(cache_dir, ignore_errors=True)
-        log.info("  Cache limpiado (.cache/)")
-
-
-def _matviews_status(conn):
-    """Muestra estado de las tablas materializadas."""
-    cur = conn.cursor()
-    expected = ["mv_cross", "mv_resumen"]
-    found = []
-    for name in expected:
-        cur.execute("""
-            SELECT 1 FROM information_schema.tables
-            WHERE table_schema = 'public' AND table_name = %s
-        """, (name,))
-        if cur.fetchone():
-            found.append(name)
-    if not found:
-        log.info("\n  No hay tablas materializadas creadas.")
-        return
-    log.info(f"\n  Tablas materializadas ({len(found)}/2):")
-    log.info(f"  {'Tabla':<30} {'Filas':>10}")
-    log.info(f"  {'-'*30} {'-'*10}")
-    for name in found:
-        try:
-            cur.execute(f"SELECT COUNT(*) FROM {name}")
-            count = cur.fetchone()[0]
-            log.info(f"  {name:<30} {count:>10,}")
-        except Exception:
-            conn.rollback()
-            log.info(f"  {name:<30} {'(error)':>10}")
-    cur.close()
-
-
-
-def _drop_redundant_indexes(conn):
-    """Elimina índices duplicados/redundantes (Step 0 del plan de performance)."""
-    cur = conn.cursor()
-    indexes_to_drop = [
-        ("idx_benefits_bid", "benefits", "duplica idx_benefits_benid"),
-        ("idx_payments_periodo", "payments", "duplica idx_payments_period"),
-        ("idx_ben_cuil", "beneficiaries", "duplica UNIQUE constraint beneficiaries_cuil_key"),
-        ("idx_benefits_periodo", "benefits", "cubierto por idx_benefits_periodo_estado"),
-        ("idx_benefits_estado", "benefits", "cubierto por idx_benefits_period_state_benid"),
-    ]
-    dropped = 0
-    for idx_name, table, reason in indexes_to_drop:
-        cur.execute("""
-            SELECT 1 FROM pg_indexes
-            WHERE indexname = %s AND tablename = %s
-        """, (idx_name, table))
-        if cur.fetchone():
-            cur.execute(f"DROP INDEX {idx_name}")
-            log.info(f"    DROP INDEX {idx_name} ({reason})")
-            dropped += 1
-    conn.commit()
-    if dropped:
-        log.info(f"\n  {dropped} índice(s) eliminado(s).")
-        cur.execute("""
-            SELECT tablename, pg_size_pretty(pg_indexes_size(tablename::regclass)) as idx_size
-            FROM (VALUES ('benefits'), ('payments'), ('beneficiaries')) t(tablename)
-        """)
-        for row in cur.fetchall():
-            log.info(f"    {row[0]}: índices = {row[1]}")
-    else:
-        log.info("\n  No hay índices redundantes para eliminar.")
-    cur.close()
-
-
-def _serve_dashboard():
-    """Lanza el dashboard Flask en modo desarrollo."""
-    import subprocess
-    log.info("\n  Iniciando dashboard en http://localhost:5000 ...")
-    log.info("    admin@demo.local / Demo123!")
-    log.info("    Ctrl+C para detener\n")
-    try:
-        subprocess.run(
-            [sys.executable, "app.py"],
-            env={**os.environ, "DATABASE_URL": DATABASE_URL},
-        )
-    except KeyboardInterrupt:
-        log.info("\n  Dashboard detenido.")
-
-
-def _init_schema():
-    """Inicializar DB: schema + índices + usuarios demo (via seed_pg.py --schema-only)."""
-    import subprocess
-    print("\n  Inicializando base de datos...")
-    result = subprocess.run([sys.executable, "seed_pg.py", "--schema-only"],
-                            env={**os.environ, "DATABASE_URL": DATABASE_URL})
-    if result.returncode == 0:
-        print("  ✅ Schema inicializado correctamente")
-    else:
-        print("  ❌ Error al inicializar schema")
-
-
-def _seed_demo():
-    """Submenu para seedear datos demo."""
-    import subprocess
-    print("\n  Seedear datos demo:")
-    print("    [1] 10K (test rápido, ~12s)")
-    print("    [2] 100K (~2min)")
-    print("    [3] 1M (~5min)")
-    print("    [4] 8M completo (~30min)")
-    print("    [0] Volver")
-    sel = input("\n  Seleccionar tamaño: ").strip()
-    flags = {"1": "--small", "2": "--medium", "3": "--1m", "4": ""}
-    if sel not in flags or sel == "0":
-        return
-    args = [sys.executable, "seed_pg.py"]
-    if flags[sel]:
-        args.append(flags[sel])
-    confirm = input(f"  Esto borra datos existentes. Continuar? (s/n): ").strip()
-    if confirm.lower() != "s":
-        return
-    result = subprocess.run(args, env={**os.environ, "DATABASE_URL": DATABASE_URL})
-    if result.returncode == 0:
-        print("  ✅ Seed completado")
-    else:
-        print("  ❌ Error durante el seed")
-
-
-def _check_consistency(conn):
-    """Check de consistencia DB ↔ tablas materializadas ↔ API."""
-    cur = conn.cursor()
-    passed = 0
-    failed = 0
-    skipped = 0
-    total = 6
-
-    # 1. Schema: tablas core
-    cur.execute("""SELECT tablename FROM pg_tables WHERE schemaname='public'
-                   AND tablename IN ('beneficiaries','benefits','payments','programs',
-                                     'users','incompatibility_rules')""")
-    tables = {r[0] for r in cur.fetchall()}
-    expected_tables = {'beneficiaries','benefits','payments','programs','users','incompatibility_rules'}
-    found_tables = len(tables & expected_tables)
-    if found_tables >= 5:
-        print(f"  ✓ Schema: {found_tables}/{len(expected_tables)} tablas core")
-        passed += 1
-    else:
-        print(f"  ✗ Schema: solo {found_tables}/{len(expected_tables)} tablas core")
-        failed += 1
-
-    # 2. Tablas materializadas existen
-    cur.execute("""SELECT COUNT(*) FROM information_schema.tables
-                   WHERE table_schema='public' AND table_name IN ('mv_cross', 'mv_resumen')""")
-    mv_count = cur.fetchone()[0]
-    if mv_count == 2:
-        print(f"  ✓ Tablas materializadas: {mv_count}/2")
-        passed += 1
-    elif mv_count > 0:
-        print(f"  ⚠ Tablas materializadas: {mv_count}/2 (falta alguna)")
-        passed += 1
-    else:
-        print(f"  ✗ Tablas materializadas: 0/2 (no creadas)")
-        failed += 1
-        for _ in range(3):
-            skipped += 1
-
-    # 3-5. Consistencia si las tablas existen
-    if mv_count > 0:
-        # mv_resumen personas vs raw COUNT(DISTINCT)
-        try:
-            cur.execute("SELECT DISTINCT periodo_mes FROM mv_resumen ORDER BY periodo_mes LIMIT 3")
-            periods = [r[0] for r in cur.fetchall()]
-            check_ok = True
-            for periodo in periods:
-                cur.execute("SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes=%s", (periodo,))
-                mv_total = cur.fetchone()[0] or 0
-                cur.execute("""SELECT COUNT(DISTINCT beneficiary_id)
-                                     + COUNT(*) FILTER (WHERE beneficiary_id IS NULL)
-                              FROM benefits
-                              WHERE periodo_mes=%s""", (periodo,))
-                real_total = cur.fetchone()[0]
-                if abs(mv_total - real_total) > 0:
-                    check_ok = False
-                    print(f"  ✗ mv_resumen personas vs raw: MISMATCH periodo {periodo} (mv={mv_total}, raw={real_total})")
-                    break
-            if check_ok:
-                print(f"  ✓ mv_resumen personas vs raw: OK ({len(periods)} periodos)")
-                passed += 1
-            else:
-                failed += 1
-        except Exception:
-            print(f"  ⚠ mv_resumen check: skip")
-            skipped += 1
-            conn.rollback()
-
-        # Cross-table consistency: beneficios/montos match between mv_cross and mv_resumen
-        try:
-            cur.execute("""SELECT c.periodo_mes, c.beneficios, r.beneficios
-                          FROM (SELECT periodo_mes, SUM(beneficios) AS beneficios FROM mv_cross GROUP BY periodo_mes) c
-                          JOIN (SELECT periodo_mes, SUM(beneficios) AS beneficios FROM mv_resumen GROUP BY periodo_mes) r
-                          ON c.periodo_mes = r.periodo_mes LIMIT 3""")
-            rows = cur.fetchall()
-            if rows and all(r[1] == r[2] for r in rows):
-                print(f"  ✓ Cross-table beneficios: OK")
-                passed += 1
-            elif rows:
-                print(f"  ✗ Cross-table beneficios: MISMATCH")
-                failed += 1
-            else:
-                skipped += 1
-        except Exception:
-            skipped += 1
-            conn.rollback()
-
-        # Concentración: sum of personas by cant_prestaciones == total personas
-        try:
-            cur.execute("""SELECT periodo_mes, SUM(personas) FROM mv_resumen GROUP BY periodo_mes LIMIT 3""")
-            for periodo, ptotal in cur.fetchall():
-                cur.execute("""SELECT SUM(personas) FROM mv_resumen
-                              WHERE periodo_mes=%s GROUP BY cant_prestaciones""", (periodo,))
-                parts_sum = sum(r[0] for r in cur.fetchall())
-                if ptotal != parts_sum:
-                    print(f"  ✗ Concentración sums: MISMATCH")
-                    failed += 1
-                    break
-            else:
-                print(f"  ✓ Concentración sums: OK")
-                passed += 1
-        except Exception:
-            skipped += 1
-            conn.rollback()
-
-    # 6. API check
-    try:
-        import requests as req
-        r = req.get("http://localhost:5000/api/health/api", timeout=3)
-        if r.status_code == 200:
-            data = r.json()
-            print(f"  ✓ API health: {data.get('status', 'unknown')}")
-            passed += 1
-        else:
-            print(f"  ⚠ API check: status {r.status_code}")
-            skipped += 1
-    except Exception:
-        print(f"  ⚠ API check: dashboard no corriendo (skip)")
-        skipped += 1
-
-    print(f"\n  {passed}/{total} checks passed, {failed} failed, {skipped} skipped")
-
-
 def menu():
     global log, _log_path
     log, _log_path = setup_logger()
@@ -1367,41 +1063,16 @@ def menu():
     log.info(f"{'='*55}")
 
     while True:
-        print(f"\n  Setup:")
-        print(f"    [I] Inicializar base de datos (schema + índices + usuarios)")
-        print(f"    [D] Seedear datos demo (10K/100K/1M/8M)")
-        print(f"  Datos:")
+        print(f"\n  Opciones:")
         print(f"    [1] Ver estado de la base de datos")
-        print(f"    [2] Cargar dataset (CSV via ingest_config.py)")
+        print(f"    [2] Cargar dataset")
         print(f"    [3] Limpiar periodo específico")
         print(f"    [4] Limpiar TODAS las tablas de datos")
-        print(f"  Pipeline:")
-        print(f"    [5] Crear tablas materializadas (mv_cross + mv_resumen)")
-        print(f"    [6] Refrescar tablas materializadas")
-        print(f"    [7] Ver estado de tablas materializadas")
-        print(f"    [8] Limpiar índices redundantes (Step 0)")
-        print(f"  Verificación:")
-        print(f"    [C] Check consistencia DB ↔ MVs ↔ API")
-        print(f"  Servicios:")
-        print(f"    [S] Servir dashboard (Flask dev)")
         print(f"    [0] Salir")
 
         opcion = input("\n  Seleccionar opción: ").strip()
 
-        if opcion.upper() == "I":
-            conn.close()  # Cerrar ANTES para no bloquear DROP TABLE
-            _init_schema()
-            conn = get_conn()
-
-        elif opcion.upper() == "D":
-            conn.close()  # Cerrar ANTES para no bloquear DROP TABLE
-            _seed_demo()
-            conn = get_conn()
-
-        elif opcion.upper() == "C":
-            _check_consistency(conn)
-
-        elif opcion == "1":
+        if opcion == "1":
             db_summary(conn)
 
         elif opcion == "2":
@@ -1450,27 +1121,6 @@ def menu():
             confirm = input("  ATENCIÓN: Esto borra TODOS los datos. Confirmar? (s/n): ").strip()
             if confirm.lower() == "s":
                 truncate_data(conn)
-
-        elif opcion == "5":
-            _create_matviews(conn)
-            conn = get_conn()  # reconectar después de create_matviews
-
-        elif opcion == "6":
-            _refresh_matviews(conn)
-            conn = get_conn()  # reconectar después de refresh_matviews
-
-        elif opcion == "7":
-            _matviews_status(conn)
-
-        elif opcion == "8":
-            confirm = input("  Eliminar índices duplicados/redundantes? (s/n): ").strip()
-            if confirm.lower() == "s":
-                _drop_redundant_indexes(conn)
-
-        elif opcion.upper() == "S":
-            conn.close()
-            _serve_dashboard()
-            conn = get_conn()
 
         elif opcion == "0":
             break

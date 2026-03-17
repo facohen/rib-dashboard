@@ -589,8 +589,34 @@
         return VIOLET_PALETTE[VIOLET_PALETTE.length - 1]
     }
 
+    // ── Lazy-load mapa: solo carga cuando entra en viewport ──
+    let mapObserverReady = false
+    let pendingMapData = null
+
+    const mapContainer = document.getElementById('map-argentina')
+    if (mapContainer && 'IntersectionObserver' in window) {
+        const mapObserver = new IntersectionObserver((entries) => {
+            if (entries[0].isIntersecting) {
+                mapObserverReady = true
+                mapObserver.disconnect()
+                if (pendingMapData) {
+                    renderGeoMap(pendingMapData)
+                    pendingMapData = null
+                }
+            }
+        }, { rootMargin: '200px' })
+        mapObserver.observe(mapContainer)
+    } else {
+        mapObserverReady = true  // fallback: no observer → carga normal
+    }
+
     // renderGeoMap receives data from loadProvincia — no separate API call
     function renderGeoMap(apiData) {
+        // Defer until map is in/near viewport
+        if (!mapObserverReady) {
+            pendingMapData = apiData
+            return
+        }
         const mapDiv = document.getElementById('map-argentina')
         if (!mapDiv) return
         if (typeof L === 'undefined') return
@@ -693,13 +719,28 @@
     }
 
     function loadAll() {
-        loadSummary()
-        loadPrograma()
-        loadSecretaria()
-        loadEvolucion()
-        loadEtario()
-        loadSexo()
-        loadProvincia()  // also renders geo map
+        // Phase 1: KPIs first (most visible)
+        loadSummary().then(() => {
+            // Phase 2: visible charts (above fold)
+            loadPrograma()
+            loadSecretaria()
+            // Phase 3: below-fold charts deferred
+            if ('requestIdleCallback' in window) {
+                requestIdleCallback(() => {
+                    loadEvolucion()
+                    loadEtario()
+                    loadSexo()
+                    loadProvincia()
+                })
+            } else {
+                setTimeout(() => {
+                    loadEvolucion()
+                    loadEtario()
+                    loadSexo()
+                    loadProvincia()
+                }, 50)
+            }
+        })
     }
 
     loadAll()
