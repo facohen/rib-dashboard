@@ -65,6 +65,12 @@ edad>100: SELECT COUNT(DISTINCT b.beneficiary_id) FROM benefits b JOIN beneficia
 edad<2: SELECT COUNT(DISTINCT b.beneficiary_id) FROM benefits b JOIN beneficiaries ben ON ben.id=b.beneficiary_id WHERE b.estado_beneficio='ACTIVO' AND b.periodo_mes='2026-03' AND EXTRACT(YEAR FROM AGE(ben.fecha_nacimiento))<2
 multi: SELECT SUM(personas) FROM mv_resumen WHERE periodo_mes='2026-03' AND cant_prestaciones IN ('2','3+')
 concentracion: SELECT cant_prestaciones,SUM(personas) n FROM mv_resumen WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY 1
+benef_prov: SELECT provincia,SUM(beneficios) n FROM mv_resumen WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC LIMIT 100
+top5_benef_prov: SELECT provincia,SUM(beneficios) n FROM mv_resumen WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC LIMIT 5
+x_secretaria: SELECT secretaria_origen,SUM(personas) n FROM mv_cross WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC
+benef_secretaria: SELECT secretaria_origen,SUM(beneficios) n FROM mv_cross WHERE periodo_mes='2026-03' GROUP BY 1 ORDER BY n DESC
+otro_mes: SELECT nombre_programa,SUM(personas) n FROM mv_cross WHERE periodo_mes='2025-06' GROUP BY 1 ORDER BY n DESC LIMIT 100
+montos_mes: SELECT provincia,SUM(montos) total FROM mv_resumen WHERE periodo_mes='2025-12' GROUP BY 1 ORDER BY total DESC LIMIT 100
 """
 
 _SQL_ALLOWED_TABLES = {"beneficiaries", "benefits", "payments", "programs",

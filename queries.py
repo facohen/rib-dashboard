@@ -398,11 +398,8 @@ def _nominal_from_mv(conn, period, filters, page, page_size, offset):
             where.append("n.edad >= %s AND n.edad <= %s")
             params.extend([int(parts[0]), int(parts[1])])
     if cant_prestaciones:
-        if cant_prestaciones == "3+":
-            where.append("n.cant_prestaciones >= 3")
-        else:
-            where.append("n.cant_prestaciones = %s")
-            params.append(int(cant_prestaciones))
+        where.append("n.cant_prestaciones = %s")
+        params.append(str(cant_prestaciones))
 
     # Programa y estado: filtro directo contra arrays en la MV
     if programa_id and estado == "ACTIVO":
@@ -419,17 +416,29 @@ def _nominal_from_mv(conn, period, filters, page, page_size, offset):
 
     where_sql = " AND ".join(where)
 
+    # Count: usar estimación rápida si solo hay filtros default (periodo + estado activo),
+    # count exacto solo cuando hay filtros específicos del usuario
+    has_user_filters = any([provincia, sexo, cuil, grupo_etario, cant_prestaciones, programa_id])
+    if has_user_filters:
+        count_row = query_one(conn, f"""
+            SELECT COUNT(*) AS total FROM mv_nominal n WHERE {where_sql}
+        """, params)
+        total = int(count_row["total"]) if count_row else 0
+    else:
+        # Totales preagregados desde mv_resumen (instantáneo)
+        count_row = query_one(conn, """
+            SELECT SUM(personas) AS total FROM mv_resumen WHERE periodo_mes = %s
+        """, [period])
+        total = int(count_row["total"]) if count_row else 0
+
     rows = query(conn, f"""
         SELECT n.beneficiary_id AS id, n.cuil, n.nombre, n.apellido, n.sexo, n.edad,
-               n.provincia, n.departamento, n.cant_prestaciones, n.monto_total,
-               COUNT(*) OVER() AS _total
+               n.provincia, n.departamento, n.cant_prestaciones, n.monto_total
         FROM mv_nominal n
         WHERE {where_sql}
         ORDER BY n.apellido, n.nombre
         LIMIT %s OFFSET %s
     """, params + [page_size, offset])
-
-    total = rows[0]["_total"] if rows else 0
     items = [{
         "id": r["id"], "cuil": r["cuil"],
         "nombre": r["nombre"], "apellido": r["apellido"],
@@ -467,6 +476,25 @@ def _nominal_from_raw(conn, period, filters, page, page_size, offset):
     where_sql = " AND ".join(where)
     corte = _corte_date(period)
 
+    # HAVING clauses for aggregate filters (cant_prestaciones, grupo_etario)
+    having = []
+    having_params = []
+    if cant_prestaciones:
+        if cant_prestaciones == "3+":
+            having.append("COUNT(*) >= 3")
+        else:
+            having.append("COUNT(*) = %s")
+            having_params.append(int(cant_prestaciones))
+    if grupo_etario:
+        if grupo_etario == "60+":
+            having.append("EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento))::int >= 60")
+            having_params.append(corte)
+        else:
+            parts = grupo_etario.split("-")
+            having.append("EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento))::int BETWEEN %s AND %s")
+            having_params.extend([corte, int(parts[0]), int(parts[1])])
+    having_sql = (" HAVING " + " AND ".join(having)) if having else ""
+
     rows = query(conn, f"""
         SELECT COALESCE(ben.id, -b.id) AS id,
                COALESCE(ben.cuil, 'SIN CUIL') AS cuil,
@@ -491,9 +519,10 @@ def _nominal_from_raw(conn, period, filters, page, page_size, offset):
                  ben.fecha_nacimiento,
                  COALESCE(ben.provincia, 'Sin dato'),
                  COALESCE(ben.departamento, 'Sin dato')
+        {having_sql}
         ORDER BY COALESCE(ben.apellido, 'No identificado'), COALESCE(ben.nombre, 'No identificado')
         LIMIT %s OFFSET %s
-    """, [corte] + params + [page_size, offset])
+    """, [corte] + params + having_params + [page_size, offset])
 
     total = rows[0]["_total"] if rows else 0
     items = [{
