@@ -23,6 +23,16 @@ instance/
 .vscode/
 .idea/
 
+# Datasets (ignore all except Catalogo_Programas.csv)
+datasets/*
+!datasets/Catalogo_Programas.csv
+
+# Logs
+logs/
+
+# Backups
+backups/
+
 # Cache
 .cache/
 
