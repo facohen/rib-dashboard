@@ -1,98 +1,73 @@
-# Análisis Funcional Completo: RIB Dashboard
+# Documento de Análisis Funcional: RIB Dashboard
 
-Este documento consolida el funcionamiento integral de la aplicación, desde la persistencia de datos hasta la interacción con el usuario final.
+## 1. Introducción
+El presente documento tiene como finalidad el relevamiento técnico y funcional del sistema **RIB Dashboard**, una herramienta institucional destinada al monitoreo y análisis de prestaciones sociales. Se detalla a continuación la arquitectura del sistema, los flujos de datos y las interacciones entre los componentes de la interfaz de usuario, la capa de servicios y la persistencia en base de datos.
 
-## 1. Arquitectura de Datos y Agregación
+## 2. Arquitectura del Sistema
+El sistema se estructura bajo una arquitectura de tres capas, optimizada para el procesamiento de grandes volúmenes de datos nominales:
 
-El sistema está diseñado como un **Data Warehouse ligero** sobre PostgreSQL. Prioriza la velocidad de consulta (dashboard) sobre la inmediatez transaccional mediante el uso de tablas agregadas que actúan como caché.
+### 2.1. Capa de Presentación (Frontend)
+- **Tecnologías**: HTML5, CSS3, JavaScript (Vanilla), Jinja2 (Templates).
+- **Componentes**: Tablero de indicadores dinámico, grillas de datos nominales con paginado y componentes de visualización geográfica (Leaflet) y estadística (Chart.js).
 
-### Modelos de Agregación ([matviews.py](matviews.py))
-| Tabla | Granularidad | Propósito |
-| :--- | :--- | :--- |
-| **`mv_cross`** | Programa + Secretaría + 5 dimensiones | Filtrado multidimensional para gráficos de barras y KPIs por rubro. |
-| **`mv_resumen`** | Persona Única + 5 dimensiones | Totales nacionales deduplicados (Cobertura real). |
-| **[mv_nominal](queries.py#L361-L366)** | Beneficiario Individual | Lista searchable con arrays de programas (active_program_ids). |
+### 2.2. Capa de Aplicación (Backend)
+- **Tecnologías**: Python 3.x, Flask.
+- **Responsabilidad**: Exposición de una API RESTful para la hidratación de la interfaz, gestión de sesiones mediante `auth.py` y coordinación de la lógica de negocio a través de `queries.py`.
 
----
-
-## 2. Lógica de Negocio y Entidades
-
-La aplicación monitorea el impacto de programas sociales mediante las siguientes reglas:
-
-### Entidades Core
-- **Beneficiario**: Identificado por CUIL. Se manejan "No Identificados" con IDs negativos para auditoría de calidad de datos.
-- **Prestación (Beneficio)**: Relación [Persona] + [Programa] + [Mes]. Puede ser `ACTIVO` o `INACTIVO`.
-- **Combinación (Concentración)**: Lógica para detectar cuántos programas percibe una persona simultáneamente (1, 2, 3+).
-
-### Cálculo de Dimensiones
-- **Grupo Etario**: Calculado en SQL vía `AGE()` al corte del periodo. Grupos: 0-4, 5-12, 13-17, 18-29, 30-59, 60+.
-- **Deduplicación**: El sistema distingue entre "Beneficios" (COUNT total) y "Personas" (COUNT DISTINCT). `mv_resumen` ya viene pre-deduplicada por `beneficiary_id`.
+### 2.3. Capa de Datos (Persistencia)
+- **Motor**: PostgreSQL.
+- **Optimización**: Uso intensivo de Vistas Materializadas (`mv_resumen`, `mv_cross`, `mv_nominal`) para garantizar tiempos de respuesta sub-segundo en agregaciones masivas.
 
 ---
 
-## 3. Orquestación y Refresco ([matviews.py](matviews.py))
+## 3. Flujos de Datos End-to-End
 
-La actualización de las vistas "materializadas" (tablas físicas) sigue un patrón de lote:
+### 3.1. Proceso de Autenticación y Control de Acceso
+1. **Interfaz**: El usuario ingresa credenciales en el formulario de acceso (`login.html`).
+2. **Backend**: La solicitud es procesada por el Blueprint de autenticación en `auth.py`, que valida la existencia del usuario en la tabla `users` mediante `queries.get_user_by_email`.
+3. **Persistencia**: Se verifica el hash del password y se recupera el rol institucional (admin/analista).
+4. **Sesión**: Se establece una sesión segura y se redirige al usuario según su nivel de privilegios.
 
-1. **Scan Eficiente**: Se crea una tabla temporal (`_pp`) por cada mes. Un solo escaneo masivo resuelve todas las dimensiones para las 3 MVs.
-2. **Patrón Blue/Green (Atomic Swap)**: Se pueblan tablas shadow (`_new`), se indexan con `INCLUDE` (Index-Only Scans) y se intercambian por las activas en una sola transacción (~1ms de downtime).
-3. **Tuning de DB**: Durante el refresco se forza `work_mem = '4GB'` y `UNLOGGED TABLES` para maximizar el throughput de escritura e indexación.
+### 3.2. Hidratación del Tablero de Indicadores (Dashboard)
+El ciclo de vida del dato para la visualización de métricas sigue la siguiente secuencia:
+1. **Request GUI**: Al cargar `dashboard.html`, se disparan múltiples solicitudes asincrónicas (`fetch`) hacia los endpoints de la API (ej. `/api/indicators/summary`).
+2. **Lógica de Consulta**: El backend recibe el período y los filtros cruzados (sexo, provincia, programa, etc.) y llama a la función correspondiente en `queries.py`.
+3. **Ejecución SQL**: `queries.py` selecciona la fuente de datos optimizada:
+    - `mv_resumen`: Para totales deduplicados de personas.
+    - `mv_cross`: Para desgloses por programas y secretarías.
+4. **Respuesta API**: Los resultados se retornan en formato JSON.
+5. **Renderizado**: La lógica de JavaScript en el cliente instancia los objetos de `Chart.js`, vinculando los datos JSON a las propiedades de los gráficos y actualizando los valores de las tarjetas KPI.
 
----
+### 3.3. Gestión de Datos Nominales y Exportación
+1. **Filtros**: El administrador aplica filtros en `nominal.html`.
+2. **Paginado**: La solicitud al backend incluye parámetros de desplazamiento (`limit`/`offset`).
+3. **Consulta de Alta Performance**: Se utiliza la vista `mv_nominal`, que ya posee pre-calculadas las edades y la cantidad de prestaciones por beneficiario, evitando joins costosos en tiempo de ejecución.
+4. **Visualización**: Se hidrata la tabla de resultados y se habilita la visualización de detalles mediante un "drawer" lateral que realiza una nueva consulta puntual a `/api/nominal/beneficiaries/<id>`.
 
-## 4. Interacción Frontend-Backend
-
-### Dashboard Reactivo ([dashboard.html](templates/dashboard.html) + [queries.py](queries.py))
-- **Cross-Filtering**: El frontend mantiene un estado global de filtros. Al interactuar con un gráfico, se refrescan todos los demás.
-- **Enrutamiento de Agregados**: [queries.py](queries.py) decide dinámicamente si usar `mv_resumen` (rápida) o `mv_cross` (detallada) según los filtros activos.
-- **Lazy Loading**: Los KPIs y gráficos se cargan en fases (priorizando lo visible) y el mapa descarga detalles de provincia (`provincia-detail`) solo bajo demanda (hover).
-
-### Auditoría Nominal ([nominal.html](templates/nominal.html))
-- Permite la búsqueda exacta y filtrado granular sobre la base completa.
-- El **Drawer de Detalle** realiza un "deep dive" uniendo el historial de programas y pagos del beneficiario seleccionado.
-
----
-
-## 5. Inteligencia de Datos y Seguridad
-
-### Chatbot SQL ([chatbot.py](chatbot.py))
-- Interfaz de lenguaje natural a SQL vía **Ollama**.
-- **Seguridad**: Bloqueo estricto de PII (nombres, CUILs), solo `SELECT`, transacciones read-only y limitación de tablas permitidas.
-
-### Control de Acceso ([auth.py](auth.py) + [app.py](app.py))
-- **Roles**: `admin` (acceso a nómina, chatbot y limpieza de caché) y [user](db_schema.py#L130-L139) (solo dashboard).
-- **Sesión**: Manejo de caché de servidor (Flask-Caching) con invalidación manual tras refrescos de datos.
+### 3.4. Asistente Basado en Inteligencia Artificial (Chatbot)
+El sistema integra una interfaz de consulta en lenguaje natural (`chatbot.html` y `chatbot.py`):
+1. **Interfaz**: El usuario formula una pregunta técnica (ej. "¿Cual es el monto total liquidado por provincia en marzo?")
+2. **Generación de SQL**: El backend utiliza el modelo **Ollama** (`qwen2.5-coder`) con un prompt de sistema que describe el esquema de base de datos para traducir la pregunta a una consulta SELECT válida.
+3. **Validación y Ejecución**: Se implementa un mecanismo de seguridad "Read-Only" que bloquea cualquier operación destructiva y restringe el acceso a datos nominales sensibles (PII).
+4. **Respuesta**: El resultado se formatea dinámicamente en tablas markdown o texto enriquecido para el usuario.
 
 ---
 
-## 7. Lógicas Específicas de Programas
+## 4. Proceso de Ingesta y ETL (Back-office)
+La actualización de la información se realiza mediante el módulo `ingest.py`, el cual implementa la siguiente lógica:
+1. **Extracción**: Lectura de archivos CSV maestros mediante la librería **Polars**.
+2. **Transformación**:
+    - Normalización de provincias y departamentos según estándares institucionales.
+    - Limpieza de CUILs y validación de formatos de fecha.
+    - Desdoblado de períodos liquidados (multi-periodos).
+3. **Carga (Load)**: Inserción masiva en PostgreSQL utilizando `execute_values` para minimizar el overhead de red.
+4. **Refresco de Vistas**: Posterior a la ingesta, se ejecutan scripts de mantenimiento para actualizar las Vistas Materializadas, asegurando la consistencia de los indicadores en el dashboard.
 
-A diferencia de la mayoría de los programas que tienen una carga directa, algunos poseen lógica de negocio compleja embebida en el proceso de ingesta ([ingest_optimizado.py](ingest_optimizado.py)):
+## 5. Consideraciones de Performance y Escalabilidad
+Para el manejo eficiente de millones de registros, el sistema implementa:
+- **Cache de Aplicación**: En el backend mediante `flask_caching` para almacenar resultados de indicadores frecuentes.
+- **Materialized Views**: Estrategia de "Pre-computación" de agregados para evitar escaneos de tablas completas durante la navegación del usuario.
+- **Compresión**: Uso de `flask_compress` para reducir el tamaño de las respuestas JSON transmitidas.
 
-### Programa Alimentar (Cruce de Padrones)
-- **Lógica de Proporcionalidad**: El sistema no recibe el monto por niño, sino un monto total por titular.
-- **Procesamiento**: Realiza un JOIN en base de datos entre el padrón de "Menores" y "Titulares". Divide el monto del titular entre la cantidad de niños + embarazos (prenatal) asociados, asignando la parte proporcional a cada registro individual en `benefits` y `payments`.
-
-## 8. Funcionalidades Latentes o Legacy
-
-Durante el análisis se identificaron componentes que existen en el schema pero no están operativos en la interfaz actual:
-
-- **Reglas de Incompatibilidad**: Existe una tabla `incompatibility_rules` y datos semilla que definen cruces prohibidos (ej: AUH vs PNC). Sin embargo, el KPI de "Incompatibilidades" en el dashboard está **hardcodeado a 0** ([queries.py:L238](queries.py#L238)), lo que indica una funcionalidad pendiente de implementación o deshabilitada.
-- **Georeferenciación a nivel Departamento**: El schema y las MVs capturan el departamento, pero el frontend solo implementa el mapa a nivel Provincial.
-
-## 9. Observación sobre Contexto de Datos
-
-El diseño asume que en producción:
-- Los datos base ya residen en la base "Nominal" (PostgreSQL remoto).
-- Los scripts de ingesta ([ingest.py](ingest.py)) y archivos CSV locales de la carpeta `datasets/` son artefactos de la etapa demo/desarrollo y no forman parte del flujo productivo principal.
-
-## 10. Gestión de Usuarios y Roles
-
-La aplicación implementa una distinción funcional clara entre perfiles:
-
-| Rol | Alcance Funcional | Restricciones |
-| :--- | :--- | :--- |
-| **User (Analista)** | Dashboard de indicadores (agregados). | No puede ver datos nominales ni limpiar caché. |
-| **Admin (Auditor)** | Dashboard + Nómina + Chatbot + Administración. | Puede ver nombres, CUILs y detalles individuales de beneficios/pagos. |
-
-*Nota: El Chatbot está restringido a consultas que no devuelvan PII, incluso para administradores, como medida de seguridad adicional contra filtraciones accidentales.*
+---
+*Fin del documento formal de análisis funcional.*
