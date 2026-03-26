@@ -85,5 +85,14 @@ Este documento registra las decisiones técnicas y arquitectónicas estratégica
     *   **Positivas:** Reducción drástica de la superficie de ataque, eliminación de riesgos de ejecución accidental de truncates y mejor gestión de recursos.
     *   **Negativas:** Requiere procesos de despliegue y monitoreo separados para ambos componentes.
 
+
+## ADR 008: Separación Física de DB de Gestión y DWH
+**Estado: Aceptado**
+*   **Contexto:** La seguridad de los datos nominales (PII) es crítica y el manejo de sesiones en cookies es insuficiente para los objetivos del proyecto.
+*   **Decisión:** Dividir el almacenamiento en dos bases de datos PostgreSQL independientes:
+    1. **db_mgmt**: Operacional, para gestión de usuarios y caché de sesiones (Server-side). Acceso RW desde la app.
+    2. **db_rib_dash**: Data Warehouse (DWH) con esquemas `nominal` y `anonimizado`. Acceso controlado mediante roles diferenciados (RO/RW) por usuario de aplicación.
+*   **Consecuencia:** Aislamiento físico de PII, mayor seguridad en sesiones y facilidad de mantenimiento/escalabilidad.
+
 ---
-*Documento en evolución. Última actualización: 2026-03-25*
+*Documento en evolución. Última actualización: 2026-03-26*
