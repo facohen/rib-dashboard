@@ -1,4 +1,4 @@
-# Performance Optimization — RUB Dashboard
+# Performance Optimization — RIB Dashboard
 
 ## Context
 

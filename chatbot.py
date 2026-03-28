@@ -1,5 +1,5 @@
 """
-chatbot.py — Chatbot con IA (Ollama) para consultas SQL al RUB.
+chatbot.py — Chatbot con IA (Ollama) para consultas SQL al RIB.
 
 Blueprint Flask. Genera SQL via LLM, ejecuta read-only, formatea resultado.
 """
@@ -22,7 +22,7 @@ CHATBOT_MODEL = os.environ.get("CHATBOT_MODEL", "qwen2.5-coder:7b")
 SQL_GEN_PROMPT = """Genera SELECT PostgreSQL. Solo SQL, sin explicacion, sin backticks. LIMIT 100. Si no aplica: NO_SQL
 Nunca devolver cuil, nombre o apellido. Si piden datos de una persona especifica: NO_SQL
 
-BASE: RUB (Registro Unico de Beneficiarios) — programas sociales argentinos.
+BASE: RIB (Registro Unico de Beneficiarios) — programas sociales argentinos.
 -- Persona: ser humano, 1 fila en beneficiaries. Tiene sexo ('F','M','X'), fecha_nacimiento DATE, provincia, departamento.
 -- Beneficiario: una persona dentro de un programa. Maria en 3 programas = 1 persona, 3 beneficiarios.
 -- Beneficio/prestacion: cada fila de benefits (persona+programa+mes). Contar beneficios = COUNT(*).
@@ -124,7 +124,7 @@ def api_ask():
     if sql is None and err:
         return jsonify(error=err), 502
     if sql is None:
-        return _response("Soy un modelo de IA para contestar preguntas sobre el RUB.", "", "", 0)
+        return _response("Soy un modelo de IA para contestar preguntas sobre el RIB.", "", "", 0)
 
     # Fase 2: Ejecutar (con 1 retry)
     result, err = _execute_readonly(sql)

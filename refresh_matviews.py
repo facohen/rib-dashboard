@@ -4,7 +4,7 @@ refresh_matviews.py — Refresca las tablas materializadas (mv_cross + mv_resume
 Usa patrón blue/green: crea shadow tables, indexa, swap atómico (~1ms downtime).
 
 Ejecutar después de cada carga mensual de datos:
-    DATABASE_URL=postgresql://user:pass@host/rub python refresh_matviews.py
+    DATABASE_URL=postgresql://user:pass@host/rib_dev python refresh_matviews.py
 
 También actualiza las tablas lookup (periods, provincias_lookup)
 y limpia el cache de Flask si hay un servidor corriendo.
@@ -15,9 +15,17 @@ import time
 import psycopg2
 import requests
 
+from config import load_dotenv
+load_dotenv()
+
 from create_matviews import TABLES, _apply_tuning, _process_period
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost/rub")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL no está seteada. Exportala antes de iniciar:\n"
+        "  export DATABASE_URL=postgresql://user:pass@host/rib_dev"
+    )
 APP_URL = os.environ.get("APP_URL", "http://localhost:5000")
 
 
@@ -59,22 +67,34 @@ def run():
 
     total_cross = 0
     total_resumen = 0
+    total_cross_tc = 0
+    total_resumen_tc = 0
+    total_nominal_tc = 0
     for i, p in enumerate(periods, 1):
         t_p = time.time()
-        cross_rows, resumen_rows = _process_period(
+        cross_rows, resumen_rows, cross_tc, resumen_tc, nominal_tc = _process_period(
             cur, conn, p,
             cross_table="mv_cross_new",
             resumen_table="mv_resumen_new",
+            cross_tc_table="mv_cross_tc_new",
+            resumen_tc_table="mv_resumen_tc_new",
+            nominal_tc_table="mv_nominal_tc_new",
         )
         total_cross += cross_rows
         total_resumen += resumen_rows
+        total_cross_tc += cross_tc
+        total_resumen_tc += resumen_tc
+        total_nominal_tc += nominal_tc
         elapsed_p = time.time() - t_p
         bar = "█" * int(i / len(periods) * 30)
         bar += "░" * (30 - len(bar))
-        print(f"  {bar} {i}/{len(periods)} │ {p} │ cross:{cross_rows:>7,} res:{resumen_rows:>6,} │ {elapsed_p:>5.1f}s")
+        print(f"  {bar} {i}/{len(periods)} │ {p} │ cross:{cross_rows:>7,} res:{resumen_rows:>6,} tc:{cross_tc:>7,} │ {elapsed_p:>5.1f}s")
 
     print(f"\n  mv_cross_new: {total_cross:,} rows total")
     print(f"  mv_resumen_new: {total_resumen:,} rows total")
+    print(f"  mv_cross_tc_new: {total_cross_tc:,} rows total")
+    print(f"  mv_resumen_tc_new: {total_resumen_tc:,} rows total")
+    print(f"  mv_nominal_tc_new: {total_nominal_tc:,} rows total")
 
     # SET LOGGED + indexes on shadow tables
     for name, _, _, indexes in TABLES:
@@ -96,16 +116,15 @@ def run():
     print(f"\n{'─' * 60}")
     print("Swap atómico...", end=" ", flush=True)
     t_swap = time.time()
-    cur.execute("""
-        DROP TABLE IF EXISTS mv_cross_old;
-        ALTER TABLE mv_cross RENAME TO mv_cross_old;
-        ALTER TABLE mv_cross_new RENAME TO mv_cross;
-        DROP TABLE IF EXISTS mv_cross_old;
-        DROP TABLE IF EXISTS mv_resumen_old;
-        ALTER TABLE mv_resumen RENAME TO mv_resumen_old;
-        ALTER TABLE mv_resumen_new RENAME TO mv_resumen;
-        DROP TABLE IF EXISTS mv_resumen_old;
-    """)
+    swap_sql = ""
+    for name, _, _, _ in TABLES:
+        swap_sql += f"""
+        DROP TABLE IF EXISTS {name}_old;
+        ALTER TABLE IF EXISTS {name} RENAME TO {name}_old;
+        ALTER TABLE {name}_new RENAME TO {name};
+        DROP TABLE IF EXISTS {name}_old;
+        """
+    cur.execute(swap_sql)
     conn.commit()
     print(f"OK ({time.time() - t_swap:.3f}s)")
 
@@ -126,8 +145,9 @@ def run():
     print(f"{'─' * 60}")
     print("ANALYZE")
     print(f"{'─' * 60}")
+    analyze_tables = [t[0] for t in TABLES] + ["periods", "provincias_lookup"]
     conn.autocommit = True
-    for name in ["mv_cross", "mv_resumen", "periods", "provincias_lookup"]:
+    for name in analyze_tables:
         print(f"  {name}...", end=" ", flush=True)
         cur.execute(f"ANALYZE {name}")
         print("OK")
@@ -136,7 +156,7 @@ def run():
     print(f"\n{'─' * 60}")
     print("Resultado")
     print(f"{'─' * 60}")
-    for name in ["mv_cross", "mv_resumen", "periods", "provincias_lookup"]:
+    for name in analyze_tables:
         cur.execute(f"SELECT COUNT(*) FROM {name}")
         cnt = cur.fetchone()[0]
         print(f"  {name}: {cnt:,} rows")

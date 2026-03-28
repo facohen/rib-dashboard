@@ -12,7 +12,7 @@ from db_schema import get_conn, init_schema
 
 def run():
     print("=" * 50)
-    print("  RUB -- Inicializacion para datos reales")
+    print("  RIB -- Inicializacion para datos reales")
     print("=" * 50)
     conn = get_conn()
     init_schema(conn)

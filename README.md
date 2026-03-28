@@ -1,4 +1,4 @@
-# RUB Dashboard
+# RIB Dashboard
 
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white)
@@ -37,7 +37,7 @@
 
 ```bash
 git clone <repo-url>
-cd rub-dashboard
+cd rib-dashboard
 
 python -m venv venv
 source venv/bin/activate
@@ -47,7 +47,7 @@ pip install -r requirements.txt
 ### 3. Configurar base de datos
 
 ```bash
-export DATABASE_URL=postgresql://user:pass@localhost/rub
+export DATABASE_URL=postgresql://user:pass@localhost/rib_dev
 ```
 
 ### 4. Inicializar y cargar datos
@@ -89,7 +89,7 @@ El seed crea el schema completo (tablas + indices + extension `pg_trgm`), usuari
 ## Estructura del proyecto
 
 ```
-rub-dashboard/
+rib-dashboard/
 |
 |-- app.py                  # Servidor Flask: rutas, API endpoints, security headers
 |-- auth.py                 # Login/logout, @login_required, @admin_required, rate limiting

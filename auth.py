@@ -1,5 +1,5 @@
 """
-auth.py — Autenticacion y autorizacion RUB Dashboard
+auth.py — Autenticacion y autorizacion RIB Dashboard
 
 Contiene: login/logout, decoradores de acceso, rate limiting, hash de passwords.
 Se registra como Blueprint en app.py.
@@ -13,7 +13,7 @@ from flask import Blueprint, request, redirect, url_for, session, jsonify, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from config import get_connection
-import queries
+from queries_helpers import get_user_by_email
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -91,7 +91,7 @@ def login():
             g.db = get_connection()
         conn = g.db
 
-        user = queries.get_user_by_email(conn, email)
+        user = get_user_by_email(conn, email)
 
         password_ok = False
         if user:

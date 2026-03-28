@@ -334,7 +334,7 @@ def run(num_beneficiaries=8_000_000):
     t0 = time.time()
     db_display = DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else DATABASE_URL
     print(f"{'='*50}")
-    print(f"  RUB -- Seed sintetico ({n:,} beneficiarios)")
+    print(f"  RIB -- Seed sintetico ({n:,} beneficiarios)")
     print(f"  DB: {db_display}")
     print(f"{'='*50}")
 

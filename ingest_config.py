@@ -7,7 +7,7 @@ Las funciones de preprocesamiento se registran en ingest.py.
 
 import os
 
-DATASETS_ROOT = os.path.join(os.path.dirname(__file__), "datasets", "RUB")
+DATASETS_ROOT = os.path.join(os.path.dirname(__file__), "datasets", "RIB")
 
 # ─────────────────────────────────────────────────────────────
 # Tabla de provincias INDEC (código 2 dígitos → nombre oficial)
@@ -107,6 +107,12 @@ _NORM.update({
 })
 PROVINCIA_NORMALIZE = _NORM
 
+# col_map keys: cuil, nombre, apellido, sexo, fecha_nacimiento, provincia,
+#   codigo_provincia_indec, departamento, codigo_departamento_indec, cp,
+#   programa, secretaria, periodo, estado, monto, fecha_pago.
+# Optional TC (titular de cobro) keys — default to TD values when absent:
+#   cuil_titular, nombre_titular, apellido_titular, sexo_titular,
+#   fecha_nacimiento_titular, provincia_titular, departamento_titular.
 DATASET_CONFIGS = [
     {
         "name": "VOUCHERS",

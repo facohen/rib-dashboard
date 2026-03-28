@@ -1,13 +1,12 @@
 """
-RUB Dashboard – Flask + PostgreSQL
+RIB Dashboard – Flask + PostgreSQL
 Correr con: DATABASE_URL=postgresql://... python app.py
 Produccion: gunicorn -w 4 app:app --bind 0.0.0.0:5000
 """
-import hashlib
 import os
 from decimal import Decimal
 
-from flask import (Flask, render_template, request, redirect, url_for,
+from flask import (Flask, render_template, redirect, url_for,
                    session, jsonify, g)
 from flask.json.provider import DefaultJSONProvider
 from flask_caching import Cache
@@ -17,7 +16,9 @@ from flask_wtf.csrf import CSRFProtect
 from config import get_connection, put_connection
 from auth import auth_bp, login_required, admin_required
 from chatbot import chatbot_bp, check_ollama
-import queries
+from endpoints_td import td_bp, init_td
+from endpoints_tc import tc_bp, init_tc
+from queries_helpers import get_periods, get_programs, get_provincias
 
 
 class CustomJSONProvider(DefaultJSONProvider):
@@ -48,12 +49,17 @@ app.config["PERMANENT_SESSION_LIFETIME"] = 3600
 csrf = CSRFProtect(app)
 app.register_blueprint(auth_bp)
 app.register_blueprint(chatbot_bp)
+app.register_blueprint(td_bp)
+app.register_blueprint(tc_bp)
 
 # ── Cache ──
 CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
 cache_config = {"CACHE_TYPE": "FileSystemCache", "CACHE_DIR": CACHE_DIR,
                 "CACHE_DEFAULT_TIMEOUT": 3600}
 cache = Cache(app, config=cache_config)
+
+init_td(cache)
+init_tc(cache)
 
 
 # ── Security headers ──
@@ -96,7 +102,7 @@ def index():
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    periodos = queries.get_periods(get_db())
+    periodos = get_periods(get_db())
     return render_template("dashboard.html",
                            periodos=periodos,
                            default_period=periodos[0] if periodos else "2026-03",
@@ -107,101 +113,14 @@ def dashboard():
 @admin_required
 def nominal():
     conn = get_db()
-    periodos = queries.get_periods(conn)
+    periodos = get_periods(conn)
     return render_template("nominal.html",
                            periodos=periodos,
                            default_period=periodos[0] if periodos else "2026-03",
-                           programs=queries.get_programs(conn),
-                           provincias=queries.get_provincias(conn),
+                           programs=get_programs(conn),
+                           provincias=get_provincias(conn),
                            role=session.get("role"),
                            nombre=session.get("nombre"))
-
-
-# ── API: Indicators ──
-
-_FILTER_KEYS = ("secretaria", "sexo", "programa", "provincia", "departamento",
-                "grupo_etario", "cant_prestaciones")
-
-def _filters():
-    f = {k: v for k in _FILTER_KEYS if (v := request.args.get(k, "").strip())}
-    return f or None
-
-def _cache_key():
-    return "rub:" + hashlib.sha256(request.full_path.encode()).hexdigest()[:16]
-
-# Tabla declarativa: (ruta, query_fn, usa_metric)
-_INDICATOR_ROUTES = [
-    ("summary",        queries.get_summary,         False),
-    ("by-secretaria",  queries.get_by_secretaria,   True),
-    ("by-provincia",   queries.get_by_provincia,     True),
-    ("by-departamento",queries.get_by_departamento,  False),
-    ("by-programa",    queries.get_by_programa,      True),
-    ("by-sexo",        queries.get_by_sexo,          True),
-    ("by-grupo-etario",queries.get_by_grupo_etario,  True),
-    ("evolucion",      queries.get_evolucion,         True),
-]
-
-def _make_indicator_view(query_fn, has_metric, is_evolucion=False):
-    @login_required
-    @cache.cached(key_prefix=_cache_key)
-    def view():
-        if is_evolucion:
-            args = [get_db(), _filters()]
-        else:
-            args = [get_db(), request.args.get("period", "2026-03"), _filters()]
-        if has_metric:
-            args.append(request.args.get("metric", "personas"))
-        return jsonify(query_fn(*args))
-    return view
-
-for _name, _fn, _metric in _INDICATOR_ROUTES:
-    _is_evo = _name == "evolucion"
-    _view = _make_indicator_view(_fn, _metric, _is_evo)
-    _view.__name__ = f"api_{_name.replace('-', '_')}"
-    app.add_url_rule(f"/api/indicators/{_name}", view_func=_view)
-
-@app.route("/api/indicators/provincia-detail")
-@login_required
-@cache.cached(key_prefix=_cache_key)
-def api_provincia_detail():
-    provincia = request.args.get("provincia", "").strip()
-    if not provincia:
-        return jsonify(error="provincia required"), 400
-    period = request.args.get("period", "2026-03")
-    return jsonify(queries.get_provincia_detail(get_db(), period, provincia, _filters()))
-
-
-@app.route("/api/admin/clear-cache", methods=["POST"])
-@admin_required
-def clear_cache():
-    cache.clear()
-    return jsonify({"ok": True})
-
-
-# ── API: Nominal (admin only) ──
-
-@app.route("/api/nominal/beneficiaries")
-@admin_required
-def api_nominal_list():
-    period = request.args.get("period", "2026-03")
-    filters = {k: request.args.get(k, "").strip() if k != "estado" else request.args.get(k, "ACTIVO")
-               for k in ("cuil", "provincia", "programa", "sexo", "grupo_etario", "cant_prestaciones", "estado")}
-    page = int(request.args.get("page", 1))
-    page_size = int(request.args.get("pageSize", 20))
-    return jsonify(queries.get_nominal_list(get_db(), period, filters, page, page_size))
-
-@app.route("/api/nominal/beneficiaries/<bid>")
-@admin_required
-def api_nominal_detail(bid):
-    try:
-        bid = int(bid)
-    except (ValueError, TypeError):
-        return jsonify(error="ID inválido"), 400
-    period = request.args.get("period", "2026-03")
-    detail = queries.get_nominal_detail(get_db(), bid, period)
-    if not detail:
-        return jsonify(error="No encontrado"), 404
-    return jsonify(detail)
 
 
 # ── Health ──
@@ -218,8 +137,8 @@ def health_api():
         checks["db"] = "error"
     try:
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('mv_cross','mv_resumen')")
-        checks["matviews"] = f"{cur.fetchone()[0]}/2"
+        cur.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('mv_cross','mv_resumen','mv_cross_tc','mv_resumen_tc','mv_nominal_tc')")
+        checks["matviews"] = f"{cur.fetchone()[0]}/5"
     except Exception:
         checks["matviews"] = "error"
     checks["cache"] = cache_config.get("CACHE_TYPE", "unknown")
@@ -235,6 +154,6 @@ def health_ml():
 # ── Main ──
 
 if __name__ == "__main__":
-    print("\n>> RUB Dashboard: http://localhost:5000")
+    print("\n>> RIB Dashboard: http://localhost:5000")
     print("   admin@demo.local / Demo123!\n")
     app.run(debug=os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true"), port=5000)

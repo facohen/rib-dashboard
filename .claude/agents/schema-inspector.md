@@ -7,7 +7,7 @@ model: sonnet
 
 # Schema Inspector
 
-Sos un agente especializado en inspeccionar schemas de PostgreSQL y compararlos con el código existente del proyecto RUB Dashboard.
+Sos un agente especializado en inspeccionar schemas de PostgreSQL y compararlos con el código existente del proyecto RIB Dashboard.
 
 ## Contexto del proyecto
 

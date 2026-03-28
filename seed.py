@@ -1,10 +1,10 @@
 """
-seed.py — Datos demo para RUB Dashboard
+seed.py — Datos demo para RIB Dashboard
 """
 import sqlite3, hashlib, random
 from datetime import date, timedelta
 
-DB_PATH = "rub.db"
+DB_PATH = "rib.db"
 
 PROVINCIAS = [
     ("Buenos Aires", "06", [("La Matanza","06427"),("Lomas de Zamora","06490"),("Quilmes","06658"),("General Pueyrredón","06357"),("Almirante Brown","06028")]),
@@ -71,7 +71,7 @@ def run():
 
     # Usuarios
     c.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(?,?,?,?)",
-              ("admin@demo.local", hash_pw("Demo123!"), "admin", "Administrador RUB"))
+              ("admin@demo.local", hash_pw("Demo123!"), "admin", "Administrador RIB"))
     c.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(?,?,?,?)",
               ("user@demo.local", hash_pw("Demo123!"), "user", "Analista"))
     conn.commit()

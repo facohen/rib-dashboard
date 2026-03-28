@@ -1,5 +1,5 @@
 """
-ingest.py — Ingesta de datasets CSV al esquema RUB (PostgreSQL)
+ingest.py — Ingesta de datasets CSV al esquema RIB (PostgreSQL)
 
 Usa Polars para leer CSVs en chunks, limpiar y transformar en memoria,
 y psycopg2 execute_values para escribir directo a las tablas finales.
@@ -34,10 +34,15 @@ from psycopg2.extras import execute_values
 
 from ingest_config import DATASET_CONFIGS, DATASETS_ROOT, PROVINCIA_NORMALIZE
 from ingest_log import setup_logger, log_report
+from config import load_dotenv
+load_dotenv()
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://postgres:postgres@localhost/rub"
-)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL no está seteada. Exportala antes de iniciar:\n"
+        "  export DATABASE_URL=postgresql://user:pass@host/rib_dev"
+    )
 CHUNK_SIZE = 200_000
 BATCH_SIZE = 10_000
 MAX_ROWS = 50_000  # 0 = sin límite; >0 = cortar después de N filas (modo test)
@@ -1057,7 +1062,7 @@ def menu():
     conn = get_conn()
     db_url_display = DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL
     log.info(f"\n{'='*55}")
-    log.info(f"  RUB — Ingesta de Datasets")
+    log.info(f"  RIB — Ingesta de Datasets")
     log.info(f"  DB: {db_url_display}")
     log.info(f"  Log: {_log_path}")
     log.info(f"{'='*55}")

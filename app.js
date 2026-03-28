@@ -111,7 +111,7 @@ function doLogin() {
     const email = loginSelect ? loginSelect.value : document.getElementById('loginEmail').value;
     const err = document.getElementById('login-error');
     if (email.includes('admin')) {
-        currentUser = { email, role: 'admin', nombre: 'Admin RUB' };
+        currentUser = { email, role: 'admin', nombre: 'Admin RIB' };
         setupSession();
         showView('dashboard');
     } else if (email.includes('user')) {

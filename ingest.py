@@ -1,5 +1,5 @@
 """
-ingest.py — Ingesta de datasets CSV al esquema RUB (PostgreSQL)
+ingest.py — Ingesta de datasets CSV al esquema RIB (PostgreSQL)
 
 Usa Polars para leer CSVs en chunks, limpiar y transformar en memoria,
 y psycopg2 execute_values para escribir directo a las tablas finales.
@@ -42,7 +42,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError(
         "DATABASE_URL no está seteada. Exportala antes de iniciar:\n"
-        "  export DATABASE_URL=postgresql://user:pass@host/rub"
+        "  export DATABASE_URL=postgresql://user:pass@host/rib_dev"
     )
 CHUNK_SIZE = 200_000
 BATCH_SIZE = 10_000
@@ -284,6 +284,23 @@ def clean_chunk(df, col_map, defaults):
 
     df = df.select(exprs)
 
+    # Default TC = TD when CSV has no TC columns (self-reference)
+    _tc_td_pairs = [
+        ("cuil_titular", "cuil"), ("nombre_titular", "nombre"),
+        ("apellido_titular", "apellido"), ("sexo_titular", "sexo"),
+        ("fecha_nacimiento_titular", "fecha_nacimiento"),
+        ("provincia_titular", "provincia"), ("departamento_titular", "departamento"),
+    ]
+    for tc_col, td_col in _tc_td_pairs:
+        if tc_col in df.columns:
+            pass  # already present (e.g. load_alimentar pre-populates)
+        elif tc_col in col_map and col_map[tc_col] in csv_cols:
+            df = df.with_columns(
+                pl.col(col_map[tc_col]).cast(pl.Utf8).str.strip_chars().alias(tc_col)
+            )
+        else:
+            df = df.with_columns(pl.col(td_col).alias(tc_col))
+
     # Limpiar CUIL: solo dígitos, al menos 8 chars
     df = df.with_columns(
         pl.col("cuil").str.replace_all(r"[^0-9]", "").alias("cuil")
@@ -379,6 +396,24 @@ def clean_chunk(df, col_map, defaults):
         pl.col("provincia").map_elements(_normalize_prov, return_dtype=pl.Utf8).alias("provincia")
     )
 
+    # Normalize TC columns
+    df = df.with_columns(
+        pl.col("cuil_titular").str.replace_all(r"[^0-9]", "").alias("cuil_titular")
+    )
+    sexo_tc = pl.col("sexo_titular").str.strip_chars()
+    df = df.with_columns(
+        pl.when(sexo_tc.str.to_uppercase().str.starts_with("F")).then(pl.lit("F"))
+          .when(sexo_tc.str.to_uppercase().str.starts_with("M")).then(pl.lit("M"))
+          .when(sexo_tc.str.to_uppercase().str.starts_with("X")).then(pl.lit("X"))
+          .when(sexo_tc == "1").then(pl.lit("M"))
+          .when(sexo_tc == "2").then(pl.lit("F"))
+          .otherwise(pl.lit("NI"))
+          .alias("sexo_titular")
+    )
+    df = df.with_columns(
+        pl.col("provincia_titular").map_elements(_normalize_prov, return_dtype=pl.Utf8).alias("provincia_titular")
+    )
+
     return df
 
 
@@ -430,10 +465,25 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
             except (ValueError, TypeError):
                 monto = 0.0
 
+            # TC columns (always populated)
+            cuil_titular = row.get("cuil_titular", cuil) or cuil
+            nombre_tc = row.get("nombre_titular", row.get("nombre", "S/D")) or "S/D"
+            apellido_tc = row.get("apellido_titular", row.get("apellido", "S/D")) or "S/D"
+            sexo_tc = row.get("sexo_titular", row.get("sexo", "NI")) or "NI"
+            fecha_nac_tc = row.get("fecha_nacimiento_titular", row.get("fecha_nacimiento", "1900-01-01")) or "1900-01-01"
+            if fecha_nac_tc and len(fecha_nac_tc) >= 10:
+                fecha_nac_tc = fecha_nac_tc[:10]
+            else:
+                fecha_nac_tc = "1900-01-01"
+            provincia_tc = row.get("provincia_titular", row.get("provincia", "Sin dato")) or "Sin dato"
+            departamento_tc = row.get("departamento_titular", row.get("departamento", "Sin dato")) or "Sin dato"
+
             # CUIL inválido
             if not cuil or len(cuil) < 8:
                 stats["cuil_invalido"] += 1
-                benf_batch.append((cuil or None, prog_id, periodo, estado))
+                benf_batch.append((cuil or None, prog_id, periodo, estado,
+                                   cuil_titular, nombre_tc, apellido_tc, sexo_tc,
+                                   fecha_nac_tc, provincia_tc, departamento_tc))
                 stats["benefits_new"] += 1
                 continue
 
@@ -469,7 +519,9 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
             if not skip_dedup and bkey in cache.benefits:
                 stats["benefits_skip"] += 1
             else:
-                benf_batch.append((cuil, prog_id, periodo, estado))
+                benf_batch.append((cuil, prog_id, periodo, estado,
+                                   cuil_titular, nombre_tc, apellido_tc, sexo_tc,
+                                   fecha_nac_tc, provincia_tc, departamento_tc))
                 cache.benefits.add(bkey)
                 stats["benefits_new"] += 1
 
@@ -521,11 +573,17 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
     for i in range(0, len(benf_batch), BATCH_SIZE):
         execute_values(cur, """
             INSERT INTO benefits
-                (beneficiary_id, cuil_raw, program_id, periodo_mes, estado_beneficio)
+                (beneficiary_id, cuil_raw, program_id, periodo_mes, estado_beneficio,
+                 cuil_titular, nombre_titular, apellido_titular, sexo_titular,
+                 fecha_nacimiento_titular, provincia_titular, departamento_titular)
             SELECT
                 (SELECT id FROM beneficiaries WHERE cuil = v.cuil_raw),
-                v.cuil_raw, v.program_id::int, v.periodo_mes, v.estado
-            FROM (VALUES %s) AS v(cuil_raw, program_id, periodo_mes, estado)
+                v.cuil_raw, v.program_id::int, v.periodo_mes, v.estado,
+                v.cuil_titular, v.nombre_titular, v.apellido_titular, v.sexo_titular,
+                v.fecha_nac_titular::date, v.provincia_titular, v.departamento_titular
+            FROM (VALUES %s) AS v(cuil_raw, program_id, periodo_mes, estado,
+                                   cuil_titular, nombre_titular, apellido_titular, sexo_titular,
+                                   fecha_nac_titular, provincia_titular, departamento_titular)
         """, benf_batch[i:i+BATCH_SIZE])
 
     for i in range(0, len(pay_batch), BATCH_SIZE):
@@ -903,7 +961,11 @@ def load_alimentar(conn):
                        ROUND(t.monto_titular::numeric
                              / NULLIF(c.n + COALESCE(t.prenatal::int, 0), 0), 2),
                        0
-                   )::text
+                   )::text,
+                   m.cuil_titular,
+                   t.apellido_nombre_titular,
+                   t.fecha_nacimiento_titular,
+                   t.sexo_titular
             FROM _alim_menores m
             LEFT JOIN _alim_titulares t
                 ON m.cuil_titular = t.cuil_titular AND m.periodo = t.periodo
@@ -931,14 +993,32 @@ def load_alimentar(conn):
                 "periodo": [r[4] for r in rows],
                 "provincia": [r[5] for r in rows],
                 "monto": [r[6] for r in rows],
+                "cuil_titular": [r[7] or "" for r in rows],
+                "apellido_nombre_titular": [r[8] or "" for r in rows],
+                "fecha_nacimiento_titular": [r[9] or "" for r in rows],
+                "sexo_titular": [r[10] or "" for r in rows],
             })
 
             df = _split_apellido_nombre(df, "apellido_nombre")
+            # Split titular apellido_nombre
+            df = df.with_columns([
+                pl.col("apellido_nombre_titular").str.split_exact(",", 1)
+                  .struct.rename_fields(["_apellido_tit", "_nombre_tit"])
+            ]).unnest("apellido_nombre_titular")
+            df = df.with_columns([
+                pl.col("_apellido_tit").str.strip_chars().fill_null("S/D").alias("apellido_titular"),
+                pl.col("_nombre_tit").str.strip_chars().fill_null("S/D").alias("nombre_titular"),
+            ])
+
             df = df.select([
                 "cuil",
                 pl.col("_nombre").alias("nombre"),
                 pl.col("_apellido").alias("apellido"),
                 "sexo", "fecha_nacimiento", "provincia", "monto", "periodo",
+                "cuil_titular", "nombre_titular", "apellido_titular",
+                "sexo_titular", "fecha_nacimiento_titular",
+                pl.col("provincia").alias("provincia_titular"),
+                pl.lit("Sin dato").alias("departamento_titular"),
             ])
 
             clean = clean_chunk(df, col_map, defaults)
@@ -1118,7 +1198,7 @@ def _clear_cache():
 def _matviews_status(conn):
     """Muestra estado de las tablas materializadas."""
     cur = conn.cursor()
-    expected = ["mv_cross", "mv_resumen"]
+    expected = ["mv_cross", "mv_resumen", "mv_cross_tc", "mv_resumen_tc", "mv_nominal_tc"]
     found = []
     for name in expected:
         cur.execute("""
@@ -1258,11 +1338,14 @@ def _check_consistency(conn):
 
     # ── 2. MVs existen ──
     cur.execute("""SELECT table_name FROM information_schema.tables
-                   WHERE table_schema='public' AND table_name IN ('mv_cross','mv_resumen')""")
+                   WHERE table_schema='public' AND table_name IN ('mv_cross','mv_resumen','mv_cross_tc','mv_resumen_tc','mv_nominal_tc')""")
     mvs = {r[0] for r in cur.fetchall()}
     mv_ok = 'mv_cross' in mvs and 'mv_resumen' in mvs
-    if mv_ok:
-        ok("Tablas materializadas: mv_cross + mv_resumen")
+    tc_ok = 'mv_cross_tc' in mvs and 'mv_resumen_tc' in mvs and 'mv_nominal_tc' in mvs
+    if mv_ok and tc_ok:
+        ok("Tablas materializadas: TD (mv_cross + mv_resumen) + TC (mv_cross_tc + mv_resumen_tc + mv_nominal_tc)")
+    elif mv_ok:
+        ok("Tablas materializadas: mv_cross + mv_resumen (TC tables missing)")
     elif mvs:
         skip(f"Tablas materializadas: solo {mvs}")
     else:
@@ -1598,7 +1681,7 @@ def menu():
     conn = get_conn()
     db_url_display = DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL
     log.info(f"\n{'='*55}")
-    log.info(f"  RUB — Ingesta de Datasets")
+    log.info(f"  RIB — Ingesta de Datasets")
     log.info(f"  DB: {db_url_display}")
     log.info(f"  Log: {_log_path}")
     log.info(f"{'='*55}")
@@ -1613,7 +1696,7 @@ def menu():
         print(f"    [3] Limpiar periodo específico")
         print(f"    [4] Limpiar TODAS las tablas de datos")
         print(f"  Pipeline:")
-        print(f"    [5] Crear tablas materializadas (mv_cross + mv_resumen)")
+        print(f"    [5] Crear tablas materializadas (mv_cross + mv_resumen + TC)")
         print(f"    [6] Refrescar tablas materializadas")
         print(f"    [7] Ver estado de tablas materializadas")
         print(f"    [8] Limpiar índices redundantes (Step 0)")

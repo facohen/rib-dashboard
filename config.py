@@ -32,7 +32,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError(
         "DATABASE_URL no está seteada. Exportala antes de iniciar:\n"
-        "  export DATABASE_URL=postgresql://user:pass@host/rub"
+        "  export DATABASE_URL=postgresql://user:pass@host/rib_dev"
     )
 
 # Agregar sslmode=prefer si no viene en el connection string

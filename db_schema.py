@@ -1,5 +1,5 @@
 """
-db_schema.py — Schema DDL, indices y usuarios demo para RUB Dashboard.
+db_schema.py — Schema DDL, indices y usuarios demo para RIB Dashboard.
 
 Modulo compartido por seed_sintetico.py y seed_real.py.
 """
@@ -12,7 +12,7 @@ load_dotenv()
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL no seteada. export DATABASE_URL=postgresql://user:pass@host/rub")
+    raise RuntimeError("DATABASE_URL no seteada. export DATABASE_URL=postgresql://user:pass@host/rib_dev")
 
 
 SCHEMA = """
@@ -65,7 +65,14 @@ CREATE TABLE benefits (
     cuil_raw TEXT,
     program_id INTEGER NOT NULL REFERENCES programs(id),
     periodo_mes TEXT NOT NULL,
-    estado_beneficio TEXT NOT NULL DEFAULT 'ACTIVO'
+    estado_beneficio TEXT NOT NULL DEFAULT 'ACTIVO',
+    cuil_titular TEXT,
+    nombre_titular TEXT,
+    apellido_titular TEXT,
+    sexo_titular TEXT,
+    fecha_nacimiento_titular DATE,
+    provincia_titular TEXT,
+    departamento_titular TEXT
 );
 
 CREATE TABLE payments (
@@ -94,10 +101,11 @@ INDEXES = [
     "CREATE INDEX idx_ben_cuil ON beneficiaries(cuil)",
     "CREATE INDEX idx_payments_covering ON payments(periodo_mes, beneficiary_id, program_id) INCLUDE (monto_prestacion)",
     "CREATE INDEX idx_ben_cuil_trgm ON beneficiaries USING gin(cuil gin_trgm_ops)",
+    "CREATE INDEX idx_benefits_periodo_cuil_titular ON benefits(periodo_mes, cuil_titular) INCLUDE (program_id, beneficiary_id)",
 ]
 
 DEMO_USERS = [
-    ("admin@demo.local", "Demo123!", "admin", "Administrador RUB"),
+    ("admin@demo.local", "Demo123!", "admin", "Administrador RIB"),
     ("user@demo.local",  "Demo123!", "user",  "Analista"),
 ]
 

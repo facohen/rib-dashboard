@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-RUB Dashboard ("Registro Único de Beneficiarios") — a social benefits monitoring dashboard that tracks beneficiaries across multiple social programs, detects incompatibilities, and provides geographic/demographic analysis.
+RIB Dashboard ("Registro Único de Beneficiarios") — a social benefits monitoring dashboard that tracks beneficiaries across multiple social programs, detects incompatibilities, and provides geographic/demographic analysis.
 
 ## Commands
 
@@ -43,7 +43,7 @@ python app.py                  # Dev server on http://localhost:5000
 
 ### Environment variables
 ```bash
-export DATABASE_URL=postgresql://postgres:postgres@localhost/rub
+export DATABASE_URL=postgresql://postgres:postgres@localhost/rib_dev
 ```
 
 No build step, no linting, no test suite configured.

@@ -7,7 +7,7 @@ model: sonnet
 
 # Endpoint Tester
 
-Sos un agente especializado en verificar que todos los endpoints del RUB Dashboard funcionan correctamente.
+Sos un agente especializado en verificar que todos los endpoints del RIB Dashboard funcionan correctamente.
 
 ## Proceso
 
@@ -19,7 +19,7 @@ Sos un agente especializado en verificar que todos los endpoints del RUB Dashboa
 
 2. **Login** para obtener session cookie:
    ```bash
-   curl -s -c /tmp/rub-cookies.txt -d "email=admin@demo.local&password=Demo123!" -L http://localhost:5000/login
+   curl -s -c /tmp/rib-cookies.txt -d "email=admin@demo.local&password=Demo123!" -L http://localhost:5000/login
    ```
 
 3. **Probar cada endpoint** con la cookie de sesión:
@@ -28,19 +28,30 @@ Sos un agente especializado en verificar que todos los endpoints del RUB Dashboa
    - `GET /dashboard`
    - `GET /dashboard/nominal`
 
-   **API Indicators** (esperan JSON válido):
+   **API Indicators TD** (esperan JSON válido):
    - `GET /api/indicators/summary?period=2026-03`
    - `GET /api/indicators/by-secretaria?period=2026-03`
    - `GET /api/indicators/by-provincia?period=2026-03`
-   - `GET /api/indicators/by-departamento?period=2026-03`
    - `GET /api/indicators/by-programa?period=2026-03`
    - `GET /api/indicators/by-sexo?period=2026-03`
    - `GET /api/indicators/by-grupo-etario?period=2026-03`
    - `GET /api/indicators/evolucion`
 
-   **API Nominal** (esperan JSON válido):
+   **API Nominal TD** (esperan JSON válido):
    - `GET /api/nominal/beneficiaries?period=2026-03&page=1&pageSize=5`
    - `GET /api/nominal/beneficiaries/1?period=2026-03`
+
+   **API Indicators TC** (esperan JSON válido):
+   - `GET /api/tc/indicators/summary?period=2026-03`
+   - `GET /api/tc/indicators/by-secretaria?period=2026-03`
+   - `GET /api/tc/indicators/by-provincia?period=2026-03`
+   - `GET /api/tc/indicators/by-programa?period=2026-03`
+   - `GET /api/tc/indicators/by-sexo?period=2026-03`
+   - `GET /api/tc/indicators/by-grupo-etario?period=2026-03`
+   - `GET /api/tc/indicators/evolucion`
+
+   **API Nominal TC** (esperan JSON válido):
+   - `GET /api/tc/nominal/titulares?period=2026-03&page=1&pageSize=5`
 
 4. **Para cada endpoint verificar**:
    - HTTP status code == 200
@@ -52,10 +63,10 @@ Sos un agente especializado en verificar que todos los endpoints del RUB Dashboa
 5. **Generar reporte**:
 
    ```
-   ENDPOINT                                STATUS  TIME    NOTAS
-   GET /dashboard                          200     120ms   OK
-   GET /api/indicators/summary             200     340ms   OK
-   GET /api/indicators/by-secretaria       500     50ms    ERROR: column "secretaria_origen" does not exist
+   ENDPOINT                                    STATUS  TIME    NOTAS
+   GET /dashboard                              200     120ms   OK
+   GET /api/indicators/summary                 200     340ms   OK
+   GET /api/tc/indicators/summary              200     280ms   OK
    ...
    ```
 
@@ -65,5 +76,5 @@ Sos un agente especializado en verificar que todos los endpoints del RUB Dashboa
 
 - NO modificar ningún archivo del proyecto
 - NO levantar el servidor (el usuario lo hace)
-- Limpiar cookies al final: `rm -f /tmp/rub-cookies.txt`
+- Limpiar cookies al final: `rm -f /tmp/rib-cookies.txt`
 - Si el periodo por defecto no es 2026-03, detectarlo del primer endpoint que funcione

@@ -1,5 +1,5 @@
 """
-ingest_optimizado.py — Pipeline de ingesta RUB (PostgreSQL)
+ingest_optimizado.py — Pipeline de ingesta RIB (PostgreSQL)
 
 Polars para leer/limpiar CSVs, psycopg2 execute_values para escribir.
 
@@ -33,7 +33,7 @@ load_dotenv()
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL no seteada. export DATABASE_URL=postgresql://user:pass@host/rub")
+    raise RuntimeError("DATABASE_URL no seteada. export DATABASE_URL=postgresql://user:pass@host/rib_dev")
 
 CHUNK_SIZE = 200_000
 BATCH_SIZE = 10_000
@@ -931,7 +931,7 @@ def menu():
 
     conn = get_conn()
     db_url = DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL
-    log.info(f"\n{'='*50}\n  RUB -- Pipeline de Datos\n  DB: {db_url}\n{'='*50}")
+    log.info(f"\n{'='*50}\n  RIB -- Pipeline de Datos\n  DB: {db_url}\n{'='*50}")
 
     actions = {k: fn for k, _, fn in MENU_OPTIONS}
     while True:

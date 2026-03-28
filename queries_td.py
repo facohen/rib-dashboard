@@ -1,170 +1,20 @@
 """
-queries.py — Todas las queries SQL (PostgreSQL)
-Único lugar para cambiar lógica de consultas.
+queries_td.py — Queries para Titulares de Derecho (TD).
 
-Estrategia de performance:
-- Totales deduplicados → mv_resumen (~23K filas, <10ms)
-- Desglose por programa/secretaría → mv_cross (~130-180K filas, <10ms)
-- Nominal → queries optimizadas con edad en SQL
+Consultas contra mv_cross, mv_resumen, mv_nominal.
+Para TC ver queries_tc.py.
 """
-import calendar
 from datetime import date
 
 from config import query, query_one
-
-
-def _corte_date(period):
-    y, m = int(period[:4]), int(period[5:7])
-    last = calendar.monthrange(y, m)[1]
-    return f"{y}-{m:02d}-{last}"
-
-
-# ──────────────────────────────────────────────
-# Cross-filter helpers for mv_cross / mv_resumen
-# ──────────────────────────────────────────────
-
-# Map filter keys to table columns
-_CROSS_FILTER_MAP = {
-    "secretaria": "secretaria_origen",
-    "programa": "nombre_programa",
-    "provincia": "provincia",
-    "sexo": "sexo",
-    "grupo_etario": "grupo_etario",
-    "cant_prestaciones": "cant_prestaciones",
-}
-
-# Map grupo_etario filter values from the frontend to groups in MVs
-_GRUPO_ETARIO_MAP = {
-    "0-4 años": "0-4 años",
-    "5-12 años": "5-12 años",
-    "13-17 años": "13-17 años",
-    "18-29 años": "18-29 años",
-    "30-59 años": "30-59 años",
-    "60+ años": "60+ años",
-    # Also handle the old filter keys
-    "Niñez (0-12)": ["0-4 años", "5-12 años"],
-    "Jóvenes (13-29)": ["13-17 años", "18-29 años"],
-    "Adultos (30-59)": ["30-59 años"],
-    "Mayores (60+)": ["60+ años"],
-}
-
-
-def _has_filters(filters):
-    """Check if there are any active cross-chart filters."""
-    return filters and any(filters.get(k) for k in _CROSS_FILTER_MAP)
-
-
-def _cross_where(filters, exclude=None):
-    """Build WHERE clauses and params from filters."""
-    where = []
-    params = []
-    if not filters:
-        return where, params
-
-    for fkey, col in _CROSS_FILTER_MAP.items():
-        if fkey == exclude:
-            continue
-        val = filters.get(fkey)
-        if not val:
-            continue
-
-        if fkey == "grupo_etario":
-            mapped = _GRUPO_ETARIO_MAP.get(val)
-            if mapped is None:
-                continue
-            if isinstance(mapped, list):
-                placeholders = ",".join(["%s"] * len(mapped))
-                where.append(f"{col} IN ({placeholders})")
-                params.extend(mapped)
-            else:
-                where.append(f"{col} = %s")
-                params.append(mapped)
-        else:
-            where.append(f"{col} = %s")
-            params.append(val)
-
-    return where, params
-
-
-def _use_resumen(filters, group_col):
-    """Decide si usar mv_resumen (dedup) o mv_cross (por programa)."""
-    # Siempre mv_cross para desglose por programa o secretaria
-    if group_col in ("nombre_programa", "secretaria_origen"):
-        return False
-    # Si hay filtro de programa/secretaria activo, mv_cross
-    if filters and (filters.get("programa") or filters.get("secretaria")):
-        return False
-    return True
-
-
-_MV_COL = {
-    "personas": "personas",
-    "beneficios": "beneficios",
-    "montos": "montos",
-    "monto_persona": "CASE WHEN personas>0 THEN montos/personas ELSE 0 END",
-    "monto_beneficio": "CASE WHEN beneficios>0 THEN montos/beneficios ELSE 0 END",
-}
-
-_METRIC_COL = {
-    "personas": "SUM(personas)",
-    "beneficios": "SUM(beneficios)",
-    "montos": "SUM(montos)",
-    "monto_persona": "CASE WHEN SUM(personas)>0 THEN SUM(montos)/SUM(personas) ELSE 0 END",
-    "monto_beneficio": "CASE WHEN SUM(beneficios)>0 THEN SUM(montos)/SUM(beneficios) ELSE 0 END",
-}
-
-
-def _cross_query(conn, period, filters, group_col, metric="personas",
-                 exclude_filter=None, extra_cols="", table=None):
-    """Generic query on mv_cross/mv_resumen with filters, grouped by group_col."""
-    if table is None:
-        table = "mv_resumen" if _use_resumen(filters, group_col) else "mv_cross"
-    sel = _METRIC_COL.get(metric, "SUM(personas)")
-    where = ["periodo_mes = %s"]
-    params = [period]
-
-    fw, fp = _cross_where(filters, exclude=exclude_filter)
-    where.extend(fw)
-    params.extend(fp)
-
-    where_sql = " AND ".join(where)
-    extra = f", {extra_cols}" if extra_cols else ""
-    group_extra = f", {extra_cols}" if extra_cols else ""
-
-    rows = query(conn, f"""
-        SELECT {group_col}{extra}, {sel} AS total
-        FROM {table}
-        WHERE {where_sql}
-        GROUP BY {group_col}{group_extra}
-        ORDER BY total DESC
-    """, params)
-    return rows
-
-
-# ──────────────────────────────────────────────
-# Auth
-# ──────────────────────────────────────────────
-
-def get_user_by_email(conn, email):
-    return query_one(conn, "SELECT * FROM users WHERE email=%s", (email,))
-
-
-# ──────────────────────────────────────────────
-# Lookups (periodos, programas, provincias)
-# Uses lookup tables instead of scanning huge tables.
-# ──────────────────────────────────────────────
-
-def get_periods(conn):
-    rows = query(conn, "SELECT periodo_mes FROM periods ORDER BY periodo_mes DESC")
-    return [r["periodo_mes"] for r in rows]
-
-
-def get_programs(conn):
-    return query(conn, "SELECT id, nombre_programa FROM programs ORDER BY nombre_programa")
-
-
-def get_provincias(conn):
-    return query(conn, "SELECT provincia FROM provincias_lookup ORDER BY provincia")
+from queries_helpers import (
+    corte_date as _corte_date,
+    METRIC_COL as _METRIC_COL,
+    cross_where as _cross_where,
+    use_resumen as _use_resumen,
+    cross_query as _cross_query,
+    empty_summary as _empty_summary,
+)
 
 
 # ──────────────────────────────────────────────

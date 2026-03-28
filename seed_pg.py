@@ -26,7 +26,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError(
         "DATABASE_URL no está seteada. Exportala antes de iniciar:\n"
-        "  export DATABASE_URL=postgresql://user:pass@host/rub"
+        "  export DATABASE_URL=postgresql://user:pass@host/rib_dev"
     )
 
 # ──────────────────────────────────────────────
@@ -104,10 +104,10 @@ def hash_pw(pw):
     return generate_password_hash(pw)
 
 
-def _cuil_array(n):
+def _cuil_array(n, start=20_000_000):
     """Generate n CUILs as numpy string array."""
     prefixes = np.array(["20","23","24","27"])
-    nums = np.arange(20000000, 20000000 + n)
+    nums = np.arange(start, start + n)
     prefix = prefixes[np.arange(n) % 4]
     check = (np.arange(n) % 10).astype(str)
     return np.char.add(np.char.add(prefix, nums.astype(str)), check)
@@ -176,7 +176,14 @@ CREATE TABLE benefits (
     cuil_raw TEXT,
     program_id INTEGER NOT NULL REFERENCES programs(id),
     periodo_mes TEXT NOT NULL,
-    estado_beneficio TEXT NOT NULL DEFAULT 'ACTIVO'
+    estado_beneficio TEXT NOT NULL DEFAULT 'ACTIVO',
+    cuil_titular TEXT,
+    nombre_titular TEXT,
+    apellido_titular TEXT,
+    sexo_titular TEXT,
+    fecha_nacimiento_titular DATE,
+    provincia_titular TEXT,
+    departamento_titular TEXT
 );
 
 CREATE TABLE payments (
@@ -205,6 +212,7 @@ CREATE INDEX idx_ben_apellido_nombre ON beneficiaries(apellido, nombre);
 CREATE INDEX idx_ben_cuil ON beneficiaries(cuil);
 CREATE INDEX idx_payments_covering ON payments(periodo_mes, beneficiary_id, program_id) INCLUDE (monto_prestacion);
 CREATE INDEX idx_ben_cuil_trgm ON beneficiaries USING gin(cuil gin_trgm_ops);
+CREATE INDEX idx_benefits_periodo_cuil_titular ON benefits(periodo_mes, cuil_titular) INCLUDE (program_id, beneficiary_id);
 """
 
 
@@ -232,7 +240,7 @@ def run(num_beneficiaries=8_000_000):
 
     # ── Usuarios ──
     cur.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(%s,%s,%s,%s)",
-                ("admin@demo.local", hash_pw("Demo123!"), "admin", "Administrador RUB"))
+                ("admin@demo.local", hash_pw("Demo123!"), "admin", "Administrador RIB"))
     cur.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(%s,%s,%s,%s)",
                 ("user@demo.local", hash_pw("Demo123!"), "user", "Analista"))
     conn.commit()
@@ -387,6 +395,34 @@ def run(num_beneficiaries=8_000_000):
 
     print(f"OK ({n:,} rows, {time.time()-t_ben:.0f}s)")
 
+    # ── TC (Titular de Cobro) pool + family map ──
+    # AUH (prog 0) and Alimentar (prog 2) have external TCs for minors
+    TC_PROGRAMS = {prog_ids[0], prog_ids[2]}
+    n_tc = n // 5  # ~20% of beneficiaries get external TCs
+    tc_cuil = _cuil_array(n_tc, start=40_000_000)
+    tc_nombre = all_nombres_f[rng.integers(0, len(all_nombres_f), size=n_tc)]
+    tc_apellido = all_apellidos[rng.integers(0, len(all_apellidos), size=n_tc)]
+    tc_sexo = np.full(n_tc, "F", dtype='U2')
+    tc_years_age = rng.integers(25, 56, size=n_tc)
+    tc_y_part = (2026 - tc_years_age).astype(str)
+    tc_m_part = np.char.zfill(rng.integers(1, 13, size=n_tc).astype(str), 2)
+    tc_d_part = np.char.zfill(rng.integers(1, 29, size=n_tc).astype(str), 2)
+    tc_fecha = np.char.add(np.char.add(np.char.add(np.char.add(tc_y_part, '-'), tc_m_part), '-'), tc_d_part)
+    # TC province/depto: reuse same distribution
+    tc_depto_idx = rng.choice(len(flat_deptos), size=n_tc, p=flat_probs)
+    tc_provincia = flat_prov_names[tc_depto_idx]
+    tc_departamento = flat_depto_names[tc_depto_idx]
+
+    # Family map: assign minors to TC pool (pre-computed once, reused across periods)
+    minor_mask = years < 18
+    minor_indices = np.where(minor_mask)[0]
+    group_sizes = rng.integers(1, 5, size=n_tc)
+    tc_expanded = np.repeat(np.arange(n_tc), group_sizes)
+    n_assigned = min(len(minor_indices), len(tc_expanded))
+    tc_assignment = np.full(n, -1, dtype=np.int64)  # -1 = no external TC (self-reference)
+    tc_assignment[minor_indices[:n_assigned]] = tc_expanded[:n_assigned]
+    print(f"  TC pool: {n_tc:,} titulares de cobro, {n_assigned:,} menores asignados")
+
     # ── Benefits + Payments per period (vectorized) ──
     # Pre-compute per-beneficiary program assignments
     # Concentración: 50% 1 prog, 30% 2 progs, 20% 3+ progs
@@ -416,8 +452,32 @@ def run(num_beneficiaries=8_000_000):
         if len(idx) > 0:
             group_indices[c] = idx
 
-    ben_cols = ["beneficiary_id","cuil_raw","program_id","periodo_mes","estado_beneficio"]
+    ben_cols = ["beneficiary_id","cuil_raw","program_id","periodo_mes","estado_beneficio",
+                "cuil_titular","nombre_titular","apellido_titular","sexo_titular",
+                "fecha_nacimiento_titular","provincia_titular","departamento_titular"]
     pay_cols = ["beneficiary_id","program_id","fecha_pago","periodo_mes","monto_prestacion"]
+
+    def _tc_suffix(idx_arr, progs_int, cuils, n_rows):
+        """Build TC CSV suffix for benefit lines: ,cuil_tc,nombre_tc,...,depto_tc"""
+        tc_idx = tc_assignment[idx_arr]
+        has_tc = tc_idx >= 0
+        is_tc_prog = np.isin(progs_int, list(TC_PROGRAMS))
+        use_ext = has_tc & is_tc_prog
+        si = tc_idx.clip(0)
+        s = np.char.add(",", np.where(use_ext, tc_cuil[si], cuils))
+        s = np.char.add(s, ",")
+        s = np.char.add(s, np.where(use_ext, tc_nombre[si], ben_nombre[idx_arr]))
+        s = np.char.add(s, ",")
+        s = np.char.add(s, np.where(use_ext, tc_apellido[si], ben_apellido[idx_arr]))
+        s = np.char.add(s, ",")
+        s = np.char.add(s, np.where(use_ext, tc_sexo[si], ben_sexo[idx_arr]))
+        s = np.char.add(s, ",")
+        s = np.char.add(s, np.where(use_ext, tc_fecha[si], ben_fecha[idx_arr]))
+        s = np.char.add(s, ",")
+        s = np.char.add(s, np.where(use_ext, tc_provincia[si], ben_provincia[idx_arr]))
+        s = np.char.add(s, ",")
+        s = np.char.add(s, np.where(use_ext, tc_departamento[si], ben_depto[idx_arr]))
+        return s
 
     for periodo in PERIODOS:
         t_per = time.time()
@@ -429,18 +489,20 @@ def run(num_beneficiaries=8_000_000):
         b_parts = []  # list of string arrays for benefits
         p_parts = []  # list of string arrays for payments
 
-        # ── Invalidos (5%) ──
+        # ── Invalidos (5%) — TC = cuil_raw for cuil_titular, \N for other TC fields ──
         n_inv = len(inv_idx)
         if n_inv > 0:
             inv_progs = prog_ids_arr[rng.integers(0, n_progs, size=n_inv)]
             inv_null = rng.random(n_inv) > 0.5
             inv_cuils = np.where(inv_null, "\\N", "00000000000")
-            # Build: \N,cuil,prog,periodo,ACTIVO
+            # Build: \N,cuil,prog,periodo,ACTIVO,cuil_tc,\N,\N,\N,\N,\N,\N
             lines = np.char.add("\\N,", inv_cuils)
             lines = np.char.add(lines, ",")
             lines = np.char.add(lines, inv_progs.astype(str))
             lines = np.char.add(lines, periodo_prefix)
-            lines = np.char.add(lines, "ACTIVO\n")
+            lines = np.char.add(lines, "ACTIVO,")
+            lines = np.char.add(lines, inv_cuils)
+            lines = np.char.add(lines, ",\\N,\\N,\\N,\\N,\\N,\\N\n")
             b_parts.append(lines)
 
         # ── Normal valid by cant (vectorized per group) ──
@@ -462,16 +524,22 @@ def run(num_beneficiaries=8_000_000):
             # Flatten: each beneficiary produces `cant` benefit rows
             flat_bids = np.repeat(g_ben_ids, cant)
             flat_cuils = np.repeat(g_cuils, cant)
-            flat_progs = prog_matrix.ravel().astype(str)
+            flat_progs = prog_matrix.ravel()
+            flat_progs_str = flat_progs.astype(str)
             flat_estados = estado_strs.ravel()
 
-            # Build benefit lines: bid,cuil,prog,periodo,estado
+            # TC columns: per-program assignment (repeat g_idx for flattened rows)
+            flat_g_idx = np.repeat(g_idx, cant)
+            tc_suf = _tc_suffix(flat_g_idx, flat_progs, flat_cuils, len(flat_cuils))
+
+            # Build benefit lines: bid,cuil,prog,periodo,estado,tc_cuil,tc_nombre,...,tc_depto
             lines = np.char.add(flat_bids, ",")
             lines = np.char.add(lines, flat_cuils)
             lines = np.char.add(lines, ",")
-            lines = np.char.add(lines, flat_progs)
+            lines = np.char.add(lines, flat_progs_str)
             lines = np.char.add(lines, periodo_prefix)
             lines = np.char.add(lines, flat_estados)
+            lines = np.char.add(lines, tc_suf)
             lines = np.char.add(lines, "\n")
             b_parts.append(lines)
 
@@ -481,7 +549,7 @@ def run(num_beneficiaries=8_000_000):
             if n_activo > 0:
                 a_bids = flat_bids[activo_flat]
                 a_progs_int = prog_matrix.ravel()[activo_flat]
-                a_progs_str = flat_progs[activo_flat]
+                a_progs_str = flat_progs_str[activo_flat]
                 a_prog_idx = a_progs_int - prog_ids_arr[0]
                 montos = (prog_base_monto[a_prog_idx] + rng.integers(-10000, 20001, size=n_activo)).astype(str)
                 days = np.char.zfill(rng.integers(1, 29, size=n_activo).astype(str), 2)
@@ -512,12 +580,14 @@ def run(num_beneficiaries=8_000_000):
             for progs_col in [prog_a, prog_b]:
                 estados = np.where(rng.random(n_ic) >= 0.08, "ACTIVO", "INACTIVO")
                 progs_str = progs_col.astype(str)
+                tc_suf = _tc_suffix(incomp_idx, progs_col, ic_cuils, n_ic)
                 lines = np.char.add(ic_ben_ids, ",")
                 lines = np.char.add(lines, ic_cuils)
                 lines = np.char.add(lines, ",")
                 lines = np.char.add(lines, progs_str)
                 lines = np.char.add(lines, periodo_prefix)
                 lines = np.char.add(lines, estados)
+                lines = np.char.add(lines, tc_suf)
                 lines = np.char.add(lines, "\n")
                 b_parts.append(lines)
 
@@ -556,12 +626,15 @@ def run(num_beneficiaries=8_000_000):
                 e_cuils = ic_cuils[extra_mask]
 
                 estados = np.where(rng.random(n_extra) >= 0.08, "ACTIVO", "INACTIVO")
+                e_incomp_idx = incomp_idx[extra_mask]
+                tc_suf = _tc_suffix(e_incomp_idx, e_progs, e_cuils, n_extra)
                 lines = np.char.add(e_bids, ",")
                 lines = np.char.add(lines, e_cuils)
                 lines = np.char.add(lines, ",")
                 lines = np.char.add(lines, e_progs_str)
                 lines = np.char.add(lines, periodo_prefix)
                 lines = np.char.add(lines, estados)
+                lines = np.char.add(lines, tc_suf)
                 lines = np.char.add(lines, "\n")
                 b_parts.append(lines)
 
@@ -661,7 +734,7 @@ def schema_only():
 
     print("👤 Creando usuarios demo...")
     cur.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(%s,%s,%s,%s)",
-                ("admin@demo.local", hash_pw("Demo123!"), "admin", "Administrador RUB"))
+                ("admin@demo.local", hash_pw("Demo123!"), "admin", "Administrador RIB"))
     cur.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(%s,%s,%s,%s)",
                 ("user@demo.local", hash_pw("Demo123!"), "user", "Analista"))
     conn.commit()

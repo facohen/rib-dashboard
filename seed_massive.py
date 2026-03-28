@@ -105,7 +105,7 @@ def run():
 
     # ── Usuarios ──
     cur.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(%s,%s,%s,%s)",
-                ("admin@demo.local", hash_pw("Demo123!"), "admin", "Administrador RUB"))
+                ("admin@demo.local", hash_pw("Demo123!"), "admin", "Administrador RIB"))
     cur.execute("INSERT INTO users(email,password_hash,role,nombre) VALUES(%s,%s,%s,%s)",
                 ("user@demo.local", hash_pw("Demo123!"), "user", "Analista"))
     conn.commit()
