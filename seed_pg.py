@@ -159,8 +159,6 @@ CREATE TABLE beneficiaries (
     fecha_nacimiento DATE NOT NULL,
     provincia TEXT NOT NULL,
     codigo_provincia_indec TEXT NOT NULL,
-    departamento TEXT NOT NULL,
-    codigo_departamento_indec TEXT NOT NULL,
     cp TEXT
 );
 
@@ -182,8 +180,7 @@ CREATE TABLE benefits (
     apellido_titular TEXT,
     sexo_titular TEXT,
     fecha_nacimiento_titular DATE,
-    provincia_titular TEXT,
-    departamento_titular TEXT
+    provincia_titular TEXT
 );
 
 CREATE TABLE payments (
@@ -281,20 +278,17 @@ def run(num_beneficiaries=8_000_000):
     print(f"\n👥 Generando {n:,} beneficiarios...")
     t_ben = time.time()
 
-    # Pre-flatten province/department data for vectorized indexing
-    prov_names = []
-    prov_codes = []
-    depto_names = []
-    depto_codes = []
+    # Pre-flatten province data for vectorized indexing
+    # (departments kept in PROVINCIAS for weighted distribution but not stored in DB)
     prov_depto_offsets = []  # (start, count) for each province's departments
-    flat_deptos = []
+    flat_entries = []
     for prov_name, prov_code, deptos in PROVINCIAS:
-        start = len(flat_deptos)
-        for d_name, d_code in deptos:
-            flat_deptos.append((prov_name, prov_code, d_name, d_code))
+        start = len(flat_entries)
+        for _ in deptos:
+            flat_entries.append((prov_name, prov_code))
         prov_depto_offsets.append((start, len(deptos)))
 
-    # Build per-province probability → flat depto probability
+    # Build per-province probability → flat probability (one entry per department for weighting)
     total_w = sum(PROV_WEIGHTS)
     flat_probs = []
     for i, (start, count) in enumerate(prov_depto_offsets):
@@ -303,18 +297,14 @@ def run(num_beneficiaries=8_000_000):
     flat_probs = np.array(flat_probs)
     flat_probs /= flat_probs.sum()  # normalize
 
-    depto_idx = rng.choice(len(flat_deptos), size=n, p=flat_probs)
+    entry_idx = rng.choice(len(flat_entries), size=n, p=flat_probs)
 
-    # Extract province/depto arrays
-    flat_prov_names = np.array([fd[0] for fd in flat_deptos])
-    flat_prov_codes = np.array([fd[1] for fd in flat_deptos])
-    flat_depto_names = np.array([fd[2] for fd in flat_deptos])
-    flat_depto_codes = np.array([fd[3] for fd in flat_deptos])
+    # Extract province arrays
+    flat_prov_names = np.array([e[0] for e in flat_entries])
+    flat_prov_codes = np.array([e[1] for e in flat_entries])
 
-    ben_provincia = flat_prov_names[depto_idx]
-    ben_cod_prov = flat_prov_codes[depto_idx]
-    ben_depto = flat_depto_names[depto_idx]
-    ben_cod_depto = flat_depto_codes[depto_idx]
+    ben_provincia = flat_prov_names[entry_idx]
+    ben_cod_prov = flat_prov_codes[entry_idx]
 
     # Sexo: M 30%, F 50%, X 10%, NI 10%
     sexo_pool = np.array(["M","M","M","F","F","F","F","F","X","NI"])
@@ -373,18 +363,13 @@ def run(num_beneficiaries=8_000_000):
     row = np.char.add(row, sep)
     row = np.char.add(row, ben_cod_prov)
     row = np.char.add(row, sep)
-    row = np.char.add(row, ben_depto)
-    row = np.char.add(row, sep)
-    row = np.char.add(row, ben_cod_depto)
-    row = np.char.add(row, sep)
     row = np.char.add(row, ben_cp)
     row = np.char.add(row, nl)
     buf = io.StringIO()
     buf.write(''.join(row))
     _copy_buf(cur, "beneficiaries",
               ["cuil","nombre","apellido","sexo","fecha_nacimiento",
-               "provincia","codigo_provincia_indec","departamento",
-               "codigo_departamento_indec","cp"], buf)
+               "provincia","codigo_provincia_indec","cp"], buf)
     conn.commit()
     buf.close()
     del row  # free memory
@@ -408,10 +393,9 @@ def run(num_beneficiaries=8_000_000):
     tc_m_part = np.char.zfill(rng.integers(1, 13, size=n_tc).astype(str), 2)
     tc_d_part = np.char.zfill(rng.integers(1, 29, size=n_tc).astype(str), 2)
     tc_fecha = np.char.add(np.char.add(np.char.add(np.char.add(tc_y_part, '-'), tc_m_part), '-'), tc_d_part)
-    # TC province/depto: reuse same distribution
-    tc_depto_idx = rng.choice(len(flat_deptos), size=n_tc, p=flat_probs)
-    tc_provincia = flat_prov_names[tc_depto_idx]
-    tc_departamento = flat_depto_names[tc_depto_idx]
+    # TC province: reuse same distribution
+    tc_entry_idx = rng.choice(len(flat_entries), size=n_tc, p=flat_probs)
+    tc_provincia = flat_prov_names[tc_entry_idx]
 
     # Family map: assign minors to TC pool (pre-computed once, reused across periods)
     minor_mask = years < 18
@@ -454,11 +438,11 @@ def run(num_beneficiaries=8_000_000):
 
     ben_cols = ["beneficiary_id","cuil_raw","program_id","periodo_mes","estado_beneficio",
                 "cuil_titular","nombre_titular","apellido_titular","sexo_titular",
-                "fecha_nacimiento_titular","provincia_titular","departamento_titular"]
+                "fecha_nacimiento_titular","provincia_titular"]
     pay_cols = ["beneficiary_id","program_id","fecha_pago","periodo_mes","monto_prestacion"]
 
     def _tc_suffix(idx_arr, progs_int, cuils, n_rows):
-        """Build TC CSV suffix for benefit lines: ,cuil_tc,nombre_tc,...,depto_tc"""
+        """Build TC CSV suffix for benefit lines: ,cuil_tc,nombre_tc,...,provincia_tc"""
         tc_idx = tc_assignment[idx_arr]
         has_tc = tc_idx >= 0
         is_tc_prog = np.isin(progs_int, list(TC_PROGRAMS))
@@ -475,8 +459,6 @@ def run(num_beneficiaries=8_000_000):
         s = np.char.add(s, np.where(use_ext, tc_fecha[si], ben_fecha[idx_arr]))
         s = np.char.add(s, ",")
         s = np.char.add(s, np.where(use_ext, tc_provincia[si], ben_provincia[idx_arr]))
-        s = np.char.add(s, ",")
-        s = np.char.add(s, np.where(use_ext, tc_departamento[si], ben_depto[idx_arr]))
         return s
 
     for periodo in PERIODOS:
@@ -502,7 +484,7 @@ def run(num_beneficiaries=8_000_000):
             lines = np.char.add(lines, periodo_prefix)
             lines = np.char.add(lines, "ACTIVO,")
             lines = np.char.add(lines, inv_cuils)
-            lines = np.char.add(lines, ",\\N,\\N,\\N,\\N,\\N,\\N\n")
+            lines = np.char.add(lines, ",\\N,\\N,\\N,\\N,\\N\n")
             b_parts.append(lines)
 
         # ── Normal valid by cant (vectorized per group) ──

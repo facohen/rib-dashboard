@@ -267,8 +267,8 @@ def clean_chunk(df, col_map, defaults):
     """
     staging_cols = [
         "cuil", "nombre", "apellido", "sexo", "fecha_nacimiento",
-        "provincia", "codigo_provincia_indec", "departamento",
-        "codigo_departamento_indec", "cp", "programa", "secretaria",
+        "provincia", "codigo_provincia_indec",
+        "cp", "programa", "secretaria",
         "periodo", "estado", "monto", "fecha_pago"
     ]
     csv_cols = df.columns
@@ -289,7 +289,7 @@ def clean_chunk(df, col_map, defaults):
         ("cuil_titular", "cuil"), ("nombre_titular", "nombre"),
         ("apellido_titular", "apellido"), ("sexo_titular", "sexo"),
         ("fecha_nacimiento_titular", "fecha_nacimiento"),
-        ("provincia_titular", "provincia"), ("departamento_titular", "departamento"),
+        ("provincia_titular", "provincia"),
     ]
     for tc_col, td_col in _tc_td_pairs:
         if tc_col in df.columns:
@@ -476,14 +476,13 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
             else:
                 fecha_nac_tc = "1900-01-01"
             provincia_tc = row.get("provincia_titular", row.get("provincia", "Sin dato")) or "Sin dato"
-            departamento_tc = row.get("departamento_titular", row.get("departamento", "Sin dato")) or "Sin dato"
 
             # CUIL inválido
             if not cuil or len(cuil) < 8:
                 stats["cuil_invalido"] += 1
                 benf_batch.append((cuil or None, prog_id, periodo, estado,
                                    cuil_titular, nombre_tc, apellido_tc, sexo_tc,
-                                   fecha_nac_tc, provincia_tc, departamento_tc))
+                                   fecha_nac_tc, provincia_tc))
                 stats["benefits_new"] += 1
                 continue
 
@@ -507,8 +506,6 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
                     fn[:10],
                     row["provincia"],
                     row["codigo_provincia_indec"] or "",
-                    row["departamento"] or "Sin dato",
-                    row["codigo_departamento_indec"] or "",
                     row["cp"] or None,
                 ))
                 cache.cuils.add(cuil)
@@ -521,7 +518,7 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
             else:
                 benf_batch.append((cuil, prog_id, periodo, estado,
                                    cuil_titular, nombre_tc, apellido_tc, sexo_tc,
-                                   fecha_nac_tc, provincia_tc, departamento_tc))
+                                   fecha_nac_tc, provincia_tc))
                 cache.benefits.add(bkey)
                 stats["benefits_new"] += 1
 
@@ -550,8 +547,7 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
         execute_values(cur, """
             INSERT INTO beneficiaries
                 (cuil, nombre, apellido, sexo, fecha_nacimiento,
-                 provincia, codigo_provincia_indec,
-                 departamento, codigo_departamento_indec, cp)
+                 provincia, codigo_provincia_indec, cp)
             VALUES %s
             ON CONFLICT (cuil) DO UPDATE SET
                 nombre = CASE WHEN EXCLUDED.nombre != 'S/D'
@@ -564,10 +560,7 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
                                         THEN EXCLUDED.fecha_nacimiento
                                         ELSE beneficiaries.fecha_nacimiento END,
                 provincia = CASE WHEN EXCLUDED.provincia != 'Sin dato'
-                                 THEN EXCLUDED.provincia ELSE beneficiaries.provincia END,
-                departamento = CASE WHEN EXCLUDED.departamento != 'Sin dato'
-                                    THEN EXCLUDED.departamento
-                                    ELSE beneficiaries.departamento END
+                                 THEN EXCLUDED.provincia ELSE beneficiaries.provincia END
         """, ben_batch[i:i+BATCH_SIZE])
 
     for i in range(0, len(benf_batch), BATCH_SIZE):
@@ -575,15 +568,15 @@ def write_chunk(conn, cache, df, default_programa, default_secretaria, skip_dedu
             INSERT INTO benefits
                 (beneficiary_id, cuil_raw, program_id, periodo_mes, estado_beneficio,
                  cuil_titular, nombre_titular, apellido_titular, sexo_titular,
-                 fecha_nacimiento_titular, provincia_titular, departamento_titular)
+                 fecha_nacimiento_titular, provincia_titular)
             SELECT
                 (SELECT id FROM beneficiaries WHERE cuil = v.cuil_raw),
                 v.cuil_raw, v.program_id::int, v.periodo_mes, v.estado,
                 v.cuil_titular, v.nombre_titular, v.apellido_titular, v.sexo_titular,
-                v.fecha_nac_titular::date, v.provincia_titular, v.departamento_titular
+                v.fecha_nac_titular::date, v.provincia_titular
             FROM (VALUES %s) AS v(cuil_raw, program_id, periodo_mes, estado,
                                    cuil_titular, nombre_titular, apellido_titular, sexo_titular,
-                                   fecha_nac_titular, provincia_titular, departamento_titular)
+                                   fecha_nac_titular, provincia_titular)
         """, benf_batch[i:i+BATCH_SIZE])
 
     for i in range(0, len(pay_batch), BATCH_SIZE):
@@ -1018,7 +1011,6 @@ def load_alimentar(conn):
                 "cuil_titular", "nombre_titular", "apellido_titular",
                 "sexo_titular", "fecha_nacimiento_titular",
                 pl.col("provincia").alias("provincia_titular"),
-                pl.lit("Sin dato").alias("departamento_titular"),
             ])
 
             clean = clean_chunk(df, col_map, defaults)

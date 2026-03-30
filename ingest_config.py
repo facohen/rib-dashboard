@@ -108,11 +108,11 @@ _NORM.update({
 PROVINCIA_NORMALIZE = _NORM
 
 # col_map keys: cuil, nombre, apellido, sexo, fecha_nacimiento, provincia,
-#   codigo_provincia_indec, departamento, codigo_departamento_indec, cp,
+#   codigo_provincia_indec, cp,
 #   programa, secretaria, periodo, estado, monto, fecha_pago.
 # Optional TC (titular de cobro) keys — default to TD values when absent:
 #   cuil_titular, nombre_titular, apellido_titular, sexo_titular,
-#   fecha_nacimiento_titular, provincia_titular, departamento_titular.
+#   fecha_nacimiento_titular, provincia_titular.
 DATASET_CONFIGS = [
     {
         "name": "VOUCHERS",

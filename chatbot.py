@@ -23,7 +23,7 @@ SQL_GEN_PROMPT = """Genera SELECT PostgreSQL. Solo SQL, sin explicacion, sin bac
 Nunca devolver cuil, nombre o apellido. Si piden datos de una persona especifica: NO_SQL
 
 BASE: RIB (Registro Unico de Beneficiarios) — programas sociales argentinos.
--- Persona: ser humano, 1 fila en beneficiaries. Tiene sexo ('F','M','X'), fecha_nacimiento DATE, provincia, departamento.
+-- Persona: ser humano, 1 fila en beneficiaries. Tiene sexo ('F','M','X'), fecha_nacimiento DATE, provincia.
 -- Beneficiario: una persona dentro de un programa. Maria en 3 programas = 1 persona, 3 beneficiarios.
 -- Beneficio/prestacion: cada fila de benefits (persona+programa+mes). Contar beneficios = COUNT(*).
 -- Contar personas unicas = COUNT(DISTINCT beneficiary_id). NO es lo mismo que contar beneficios.
@@ -39,8 +39,8 @@ mv_resumen(periodo_mes, provincia, sexo, grupo_etario, cant_prestaciones, person
 mv_cross(periodo_mes, nombre_programa, secretaria_origen, provincia, sexo, grupo_etario, cant_prestaciones, personas, beneficios, montos)
 -- Mismas metricas pero desglosada por programa y secretaria. Usar cuando pregunten por programa.
 
-TABLAS RAW (usar solo si las MVs no alcanzan, ej: edad exacta, departamento):
-beneficiaries(id, cuil, nombre, apellido, sexo CHAR(1), fecha_nacimiento DATE, provincia, departamento)
+TABLAS RAW (usar solo si las MVs no alcanzan, ej: edad exacta):
+beneficiaries(id, cuil, nombre, apellido, sexo CHAR(1), fecha_nacimiento DATE, provincia)
 -- edad exacta: EXTRACT(YEAR FROM AGE(fecha_nacimiento))
 programs(id, secretaria_id, nombre_programa)
 secretarias(id, nombre)

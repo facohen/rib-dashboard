@@ -98,7 +98,6 @@ for (let i = 0; i < 300; i++) {
         fecha_nacimiento: bd,
         edad: age,
         provincia: prov.p,
-        departamento: pick(prov.d),
         cp: (1000 + rnd(0, 8999)).toString()
     });
 }

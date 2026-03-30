@@ -75,7 +75,7 @@ python app.py                      # Servidor en http://localhost:5000
 | `--1m` | 1M | ~15-20 min |
 | _(sin flag)_ | 8M | ~45 min |
 
-El seed crea el schema completo (tablas + indices + extension `pg_trgm`), usuarios demo, 8 programas sociales agrupados en 3 secretarias, reglas de incompatibilidad, 22 provincias con departamentos, y datos de 12 periodos. Insercion masiva via protocolo COPY.
+El seed crea el schema completo (tablas + indices + extension `pg_trgm`), usuarios demo, 8 programas sociales agrupados en 3 secretarias, reglas de incompatibilidad, 22 provincias, y datos de 12 periodos. Insercion masiva via protocolo COPY.
 
 ## Credenciales demo
 
@@ -272,7 +272,6 @@ incompatibility_rules      Pares de programas incompatibles (is_compatible boole
 | `GET /api/indicators/summary` | KPIs principales: cobertura, prestaciones, montos, concentracion |
 | `GET /api/indicators/by-secretaria` | Distribucion por secretaria |
 | `GET /api/indicators/by-provincia` | Distribucion provincial |
-| `GET /api/indicators/by-departamento` | Top departamentos |
 | `GET /api/indicators/by-programa` | Distribucion por programa |
 | `GET /api/indicators/by-sexo` | Distribucion por sexo (F/M/X) |
 | `GET /api/indicators/by-grupo-etario` | Distribucion por grupo etario (6 rangos) |
@@ -309,7 +308,7 @@ El chatbot genera SQL via LLM (Ollama) y lo ejecuta contra la base. Toda query p
 
 **Datos nominales:** si la query intenta devolver `cuil`, `nombre` o `apellido`, se rechaza con mensaje amigable. El LLM tambien esta instruido para responder `NO_SQL` ante pedidos de datos personales.
 
-**Prompt del LLM:** incluye metadata del dominio (persona vs beneficiario vs beneficio vs monto), schema de las MVs con sus dimensiones/metricas, tablas raw como fallback para queries que las MVs no cubren (ej: edad exacta, departamento), y 14 ejemplos de queries frecuentes.
+**Prompt del LLM:** incluye metadata del dominio (persona vs beneficiario vs beneficio vs monto), schema de las MVs con sus dimensiones/metricas, tablas raw como fallback para queries que las MVs no cubren (ej: edad exacta), y 14 ejemplos de queries frecuentes.
 
 **Limitaciones conocidas:** keywords DML dentro de string literals pueden causar falsos positivos (ej: `WHERE provincia = 'INSERT del Norte'`). Aceptable para uso interno.
 

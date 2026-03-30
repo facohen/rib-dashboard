@@ -53,7 +53,7 @@ TABLES = [
             periodo_mes TEXT, beneficiary_id INTEGER,
             cuil TEXT, nombre TEXT, apellido TEXT,
             sexo TEXT, edad INTEGER, grupo_etario TEXT,
-            provincia TEXT, departamento TEXT,
+            provincia TEXT,
             cant_prestaciones TEXT, cant_beneficios INTEGER,
             monto_total NUMERIC(14,2),
             program_ids INTEGER[], active_program_ids INTEGER[])""",
@@ -88,7 +88,6 @@ TABLES = [
             nombre_titular TEXT, apellido_titular TEXT,
             sexo_titular TEXT, edad_titular INT,
             grupo_etario_titular TEXT, provincia_titular TEXT,
-            departamento_titular TEXT,
             cant_td INT, cuils_td TEXT[],
             cant_beneficios INT, monto_total NUMERIC(14,2),
             program_ids INT[], active_program_ids INT[])""",
@@ -124,7 +123,6 @@ WITH base AS (
            b.nombre_titular, b.apellido_titular,
            COALESCE(b.provincia_titular, 'Sin dato') AS provincia_titular,
            COALESCE(b.sexo_titular, 'NI') AS sexo_titular,
-           b.departamento_titular,
            CASE
              WHEN b.fecha_nacimiento_titular IS NULL THEN 'Sin dato'
              WHEN calc_tc.edad_tc <= 4  THEN '0-4 años'
@@ -169,7 +167,7 @@ SELECT periodo_mes, program_id, estado_beneficio, nombre_programa, secretaria_or
        CASE WHEN cant_prog = 1 THEN '1' WHEN cant_prog = 2 THEN '2' ELSE '3+' END AS cant_prestaciones,
        beneficiary_id, COUNT(*) AS cant_benefits, SUM(monto) AS person_monto,
        cuil_titular, cuil_td, nombre_titular, apellido_titular,
-       provincia_titular, sexo_titular, departamento_titular,
+       provincia_titular, sexo_titular,
        grupo_etario_titular, edad_titular,
        CASE WHEN cant_prog_tc = 1 THEN '1' WHEN cant_prog_tc = 2 THEN '2' ELSE '3+' END AS cant_prestaciones_tc
 FROM base
@@ -178,7 +176,7 @@ GROUP BY periodo_mes, program_id, estado_beneficio, nombre_programa, secretaria_
          CASE WHEN cant_prog = 1 THEN '1' WHEN cant_prog = 2 THEN '2' ELSE '3+' END,
          beneficiary_id,
          cuil_titular, cuil_td, nombre_titular, apellido_titular,
-         provincia_titular, sexo_titular, departamento_titular,
+         provincia_titular, sexo_titular,
          grupo_etario_titular, edad_titular,
          CASE WHEN cant_prog_tc = 1 THEN '1' WHEN cant_prog_tc = 2 THEN '2' ELSE '3+' END
 """
@@ -230,7 +228,6 @@ SELECT pa.periodo_mes, pa.beneficiary_id,
             THEN EXTRACT(YEAR FROM AGE(({period_date})::date, ben.fecha_nacimiento))::int
             ELSE NULL END AS edad,
        pa.grupo_etario, pa.provincia,
-       COALESCE(ben.departamento, 'Sin dato') AS departamento,
        pa.cant_prestaciones, pa.cant_beneficios, pa.monto_total,
        pa.program_ids, COALESCE(pa.active_program_ids, ARRAY[]::int[])
 FROM person_agg pa
@@ -268,7 +265,6 @@ SELECT periodo_mes, cuil_titular,
        MAX(nombre_titular), MAX(apellido_titular),
        MAX(sexo_titular), MAX(edad_titular),
        MAX(grupo_etario_titular), MAX(provincia_titular),
-       MAX(departamento_titular),
        COUNT(DISTINCT cuil_td),
        ARRAY_AGG(DISTINCT cuil_td),
        SUM(cant_benefits)::int,

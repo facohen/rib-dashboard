@@ -179,8 +179,7 @@ def run():
         buf.seek(0)
         cur.copy_from(buf, 'beneficiaries',
                       columns=('cuil','nombre','apellido','sexo','fecha_nacimiento',
-                               'provincia','codigo_provincia_indec','departamento',
-                               'codigo_departamento_indec','cp'))
+                               'provincia','codigo_provincia_indec','cp'))
         conn.commit()
         generated += batch
         elapsed = time.time() - t0

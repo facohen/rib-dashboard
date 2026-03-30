@@ -108,10 +108,10 @@ def run():
         prov = PROVINCIAS[i % len(PROVINCIAS)]
         depto = pick(prov[2])
         c.execute("""INSERT INTO beneficiaries(cuil,nombre,apellido,sexo,fecha_nacimiento,
-                     provincia,codigo_provincia_indec,departamento,codigo_departamento_indec,cp)
-                     VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                     provincia,codigo_provincia_indec,cp)
+                     VALUES(?,?,?,?,?,?,?,?)""",
                   (cuil(i), nom, pick(APELLIDOS), sexo, birth_from_group(g),
-                   prov[0], prov[1], depto[0], depto[1], str(1000+rnd(0,8999))))
+                   prov[0], prov[1], str(1000+rnd(0,8999))))
         ben_ids.append(c.lastrowid)
     conn.commit()
     print("  ✅ Beneficiarios creados: 300")

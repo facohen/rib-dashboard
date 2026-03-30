@@ -275,7 +275,7 @@ function loadDashboard() {
         if (fSex && (!ben || ben.sexo !== fSex)) return false;
         if (fPrg && (!p || p.nombre !== fPrg)) return false;
         if (fPrv && (!ben || ben.provincia !== fPrv)) return false;
-        if (fDpt && (!ben || `${ben.departamento} (${ben.provincia.slice(0, 3)})` !== fDpt)) return false;
+        // departamento filter removed
         if (fEta && (!ben || getGrupo(ben.edad) !== fEta)) return false;
 
         return true;
@@ -289,7 +289,7 @@ function loadDashboard() {
         if (fSex && (!ben || ben.sexo !== fSex)) return false;
         if (fPrg && (!p || p.nombre !== fPrg)) return false;
         if (fPrv && (!ben || ben.provincia !== fPrv)) return false;
-        if (fDpt && (!ben || `${ben.departamento} (${ben.provincia.slice(0, 3)})` !== fDpt)) return false;
+        // departamento filter removed
         if (fEta && (!ben || getGrupo(ben.edad) !== fEta)) return false;
         return true;
     });
@@ -399,7 +399,7 @@ function loadDashboard() {
     unqBenefsIds.forEach(uid => {
         const ben = DB.beneficiaries.find(x => x.id === uid);
         if (ben) {
-            const k = `${ben.departamento} (${ben.provincia.slice(0, 3)})`;
+            const k = `${ben.provincia}`;
             dpC[k] = (dpC[k] || 0) + 1;
         }
     });
@@ -422,7 +422,7 @@ function loadDashboard() {
             if (fSex && (!ben || ben.sexo !== fSex)) return false;
             if (fPrg && (!prog || prog.nombre !== fPrg)) return false;
             if (fPrv && (!ben || ben.provincia !== fPrv)) return false;
-            if (fDpt && (!ben || `${ben.departamento} (${ben.provincia.slice(0, 3)})` !== fDpt)) return false;
+            // departamento filter removed
             if (fEta && (!ben || getGrupo(ben.edad) !== fEta)) return false;
             return true;
         });
@@ -534,7 +534,7 @@ function renderGeoMap(unqBenefsIds) {
     unqBenefsIds.forEach(uid => {
         const ben = DB.beneficiaries.find(x => x.id === uid);
         if (ben) {
-            const k = `${ben.departamento} (${ben.provincia.slice(0, 3)})`;
+            const k = `${ben.provincia}`;
             dptosCount[k] = (dptosCount[k] || 0) + 1;
         }
     });
@@ -684,7 +684,7 @@ function renderNominal(page = 1) {
       <td><span class="tag ${sx[1]}">${sx[0]}</span></td>
       <td>${b.edad}</td>
       <td>${b.provincia}</td>
-      <td class="td-m">${b.departamento}</td>
+      <td class="td-m">${b.provincia}</td>
       <td><span class="tag ${tc}">${b.cant}</span></td>
     </tr>`;
     }).join('');
@@ -723,7 +723,7 @@ function openDrawer(id) {
     <div class="info-grid">
       <div class="ii"><div class="lbl">Edad</div><div class="val">${b.edad} años (${b.fecha_nacimiento})</div></div>
       <div class="ii"><div class="lbl">Provincia</div><div class="val">${b.provincia}</div></div>
-      <div class="ii"><div class="lbl">Depto</div><div class="val">${b.departamento}</div></div>
+      <div class="ii"><div class="lbl">Depto</div><div class="val">${b.provincia}</div></div>
       <div class="ii"><div class="lbl">Total ${currentPeriod}</div><div class="val" style="color:var(--green)">${fmt$$(totAg)}</div></div>
     </div>
     
@@ -762,9 +762,9 @@ function exportCSV() {
     const data = getNominalData();
     if (data.length === 0) return alert('No hay datos para exportar.');
 
-    let csv = 'CUIL,Apellido,Nombre,Sexo,Edad,Provincia,Departamento,Cant.Prestaciones\n';
+    let csv = 'CUIL,Apellido,Nombre,Sexo,Edad,Provincia,Cant.Prestaciones\n';
     data.forEach(b => {
-        csv += `"${b.cuil}","${b.apellido}","${b.nombre}","${b.sexo}","${b.edad}","${b.provincia}","${b.departamento}","${b.cant}"\n`;
+        csv += `"${b.cuil}","${b.apellido}","${b.nombre}","${b.sexo}","${b.edad}","${b.provincia}","${b.cant}"\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

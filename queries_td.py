@@ -117,11 +117,6 @@ def get_by_provincia(conn, period, filters=None, metric="personas"):
                         metric=metric, exclude_filter="provincia")
 
 
-def get_by_departamento(conn, period, filters=None):
-    # Departamento no está en las MVs — devolver vacío
-    return []
-
-
 def get_by_programa(conn, period, filters=None, metric="personas"):
     rows = _cross_query(conn, period, filters, "nombre_programa",
                         metric=metric, exclude_filter="programa")
@@ -283,7 +278,7 @@ def _nominal_from_mv(conn, period, filters, page, page_size, offset):
 
     rows = query(conn, f"""
         SELECT n.beneficiary_id AS id, n.cuil, n.nombre, n.apellido, n.sexo, n.edad,
-               n.provincia, n.departamento, n.cant_prestaciones, n.monto_total
+               n.provincia, n.cant_prestaciones, n.monto_total
         FROM mv_nominal n
         WHERE {where_sql}
         ORDER BY n.apellido, n.nombre
@@ -293,7 +288,7 @@ def _nominal_from_mv(conn, period, filters, page, page_size, offset):
         "id": r["id"], "cuil": r["cuil"],
         "nombre": r["nombre"], "apellido": r["apellido"],
         "sexo": r["sexo"], "edad": r["edad"],
-        "provincia": r["provincia"], "departamento": r["departamento"],
+        "provincia": r["provincia"],
         "cantPrestaciones": r["cant_prestaciones"],
         "montoTotal": float(r["monto_total"]) if r["monto_total"] else 0,
     } for r in rows]
@@ -355,7 +350,6 @@ def _nominal_from_raw(conn, period, filters, page, page_size, offset):
                     THEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento))::int
                     ELSE NULL END AS edad,
                COALESCE(ben.provincia, 'Sin dato') AS provincia,
-               COALESCE(ben.departamento, 'Sin dato') AS departamento,
                COUNT(*) AS cant_prestaciones,
                COUNT(*) OVER() AS _total
         FROM benefits b
@@ -367,8 +361,7 @@ def _nominal_from_raw(conn, period, filters, page, page_size, offset):
                  COALESCE(ben.apellido, 'No identificado'),
                  COALESCE(ben.sexo, 'NI'),
                  ben.fecha_nacimiento,
-                 COALESCE(ben.provincia, 'Sin dato'),
-                 COALESCE(ben.departamento, 'Sin dato')
+                 COALESCE(ben.provincia, 'Sin dato')
         {having_sql}
         ORDER BY COALESCE(ben.apellido, 'No identificado'), COALESCE(ben.nombre, 'No identificado')
         LIMIT %s OFFSET %s
@@ -379,7 +372,7 @@ def _nominal_from_raw(conn, period, filters, page, page_size, offset):
         "id": r["id"], "cuil": r["cuil"],
         "nombre": r["nombre"], "apellido": r["apellido"],
         "sexo": r["sexo"], "edad": r["edad"],
-        "provincia": r["provincia"], "departamento": r["departamento"],
+        "provincia": r["provincia"],
         "cantPrestaciones": r["cant_prestaciones"],
     } for r in rows]
     return {"items": items, "total": total, "page": page, "pageSize": page_size}
@@ -404,7 +397,7 @@ def get_nominal_detail(conn, bid, period):
             "nombre": "No identificado", "apellido": "No identificado",
             "sexo": "NI", "edad": None,
             "fecha_nacimiento": "—",
-            "provincia": "Sin dato", "departamento": "Sin dato",
+            "provincia": "Sin dato",
             "cp": None,
             "prestaciones": [{"nombre_programa": ben_row["nombre_programa"],
                               "secretaria_origen": ben_row["secretaria_origen"],
@@ -446,7 +439,7 @@ def get_nominal_detail(conn, bid, period):
         "nombre": ben["nombre"], "apellido": ben["apellido"],
         "sexo": ben["sexo"], "edad": edad,
         "fecha_nacimiento": str(fn)[:10],
-        "provincia": ben["provincia"], "departamento": ben["departamento"],
+        "provincia": ben["provincia"],
         "cp": ben["cp"],
         "prestaciones": [dict(r) for r in prestaciones],
         "pagos": [dict(r) for r in pagos],

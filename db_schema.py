@@ -48,8 +48,6 @@ CREATE TABLE beneficiaries (
     fecha_nacimiento DATE NOT NULL,
     provincia TEXT NOT NULL,
     codigo_provincia_indec TEXT NOT NULL,
-    departamento TEXT NOT NULL,
-    codigo_departamento_indec TEXT NOT NULL,
     cp TEXT
 );
 
@@ -71,8 +69,7 @@ CREATE TABLE benefits (
     apellido_titular TEXT,
     sexo_titular TEXT,
     fecha_nacimiento_titular DATE,
-    provincia_titular TEXT,
-    departamento_titular TEXT
+    provincia_titular TEXT
 );
 
 CREATE TABLE payments (

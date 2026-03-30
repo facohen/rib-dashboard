@@ -144,7 +144,7 @@ Este documento registra las decisiones técnicas y arquitectónicas estratégica
 
     **1. Schema de origen (`db_schema.py`):**
     Se agregaron 7 columnas TC a la tabla `benefits`:
-    `cuil_titular`, `nombre_titular`, `apellido_titular`, `sexo_titular`, `fecha_nacimiento_titular`, `provincia_titular`, `departamento_titular`.
+    `cuil_titular`, `nombre_titular`, `apellido_titular`, `sexo_titular`, `fecha_nacimiento_titular`, `provincia_titular`.
     Índice: `idx_benefits_periodo_cuil_titular ON benefits(periodo_mes, cuil_titular) INCLUDE (program_id, beneficiary_id)`.
     Cuando TC = TD, estos campos replican los datos del beneficiario. Cuando TC ≠ TD (menores en AUH/Alimentar), contienen los datos del adulto cobrador.
 
@@ -156,7 +156,7 @@ Este documento registra las decisiones técnicas y arquitectónicas estratégica
     - Demografía TC: 100% femenino, edad 25-56 (adultas cobradoras).
 
     **3. Ingesta de datos reales (`ingest_config.py`):**
-    Las columnas TC son opcionales en los mapeos CSV: `cuil_titular`, `nombre_titular`, `apellido_titular`, `sexo_titular`, `fecha_nacimiento_titular`, `provincia_titular`, `departamento_titular`. Cuando están ausentes, el sistema usa los valores del TD como fallback.
+    Las columnas TC son opcionales en los mapeos CSV: `cuil_titular`, `nombre_titular`, `apellido_titular`, `sexo_titular`, `fecha_nacimiento_titular`, `provincia_titular`. Cuando están ausentes, el sistema usa los valores del TD como fallback.
 
     **4. Materialización (`create_matviews.py`, `matviews.py`, `refresh_matviews.py`):**
 

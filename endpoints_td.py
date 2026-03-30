@@ -29,7 +29,7 @@ def _get_db():
     return g.db
 
 
-_FILTER_KEYS = ("secretaria", "sexo", "programa", "provincia", "departamento",
+_FILTER_KEYS = ("secretaria", "sexo", "programa", "provincia",
                 "grupo_etario", "cant_prestaciones")
 
 
@@ -48,7 +48,6 @@ _INDICATOR_ROUTES = [
     ("summary",         queries_td.get_summary,          False),
     ("by-secretaria",   queries_td.get_by_secretaria,    True),
     ("by-provincia",    queries_td.get_by_provincia,     True),
-    ("by-departamento", queries_td.get_by_departamento,  False),
     ("by-programa",     queries_td.get_by_programa,      True),
     ("by-sexo",         queries_td.get_by_sexo,          True),
     ("by-grupo-etario", queries_td.get_by_grupo_etario,  True),

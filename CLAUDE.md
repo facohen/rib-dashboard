@@ -56,7 +56,6 @@ Claude **NO debe ejecutar directamente** ninguno de los siguientes comandos del 
 - `python seed_pg.py` (seedeo de datos)
 - `python create_matviews.py` (creación de MVs)
 - `python refresh_matviews.py` (refresh blue/green)
-- `python ingest_optimizado.py` (ingesta optimizada)
 - `python app.py` (servidor Flask)
 - Cualquier comando que inicie, reinicie o mate procesos del pipeline
 
@@ -75,7 +74,7 @@ Si alguno de estos comandos es necesario, Claude debe **pedir al usuario que lo 
 
 **Config (`config.py`):** PostgreSQL connection pooling via `ThreadedConnectionPool` (min=2, max=10). Helpers: `get_connection()`, `put_connection()`, `query()`, `query_one()`, `execute()`.
 
-**Queries (`queries.py`):** All SQL queries with `_use_resumen()` routing: `mv_resumen` for deduplicated person totals, `mv_cross` for per-program breakdowns. Raw SQL fallback for departamento only.
+**Queries (`queries_td.py`, `queries_tc.py`):** All SQL queries with `_use_resumen()` routing: `mv_resumen` for deduplicated person totals, `mv_cross` for per-program breakdowns.
 
 **Templates (`templates/`):**
 - `base.html` — Master layout with sidebar navigation and dark/light theme system

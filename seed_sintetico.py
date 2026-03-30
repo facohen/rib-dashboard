@@ -143,7 +143,7 @@ def _generate_beneficiaries(conn, cur, n, rng):
     """Genera beneficiarios vectorizado con numpy. Retorna (cuils, first_ben_id)."""
     t0 = time.time()
 
-    # Provincia/departamento
+    # Provincia
     flat_deptos = []
     for prov_name, prov_code, deptos in PROVINCIAS:
         for d_name, d_code in deptos:
@@ -206,8 +206,7 @@ def _generate_beneficiaries(conn, cur, n, rng):
     buf.write(''.join(rows))
     _copy_buf(cur, "beneficiaries",
               ["cuil","nombre","apellido","sexo","fecha_nacimiento",
-               "provincia","codigo_provincia_indec","departamento",
-               "codigo_departamento_indec","cp"], buf)
+               "provincia","codigo_provincia_indec","cp"], buf)
     conn.commit()
     buf.close()
     del rows

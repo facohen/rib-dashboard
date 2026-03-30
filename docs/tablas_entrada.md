@@ -58,8 +58,6 @@ CREATE TABLE beneficiaries (
     fecha_nacimiento DATE NOT NULL,
     provincia TEXT NOT NULL,
     codigo_provincia_indec TEXT NOT NULL,
-    departamento TEXT NOT NULL,
-    codigo_departamento_indec TEXT NOT NULL,
     cp TEXT
 );
 ```
@@ -74,8 +72,6 @@ CREATE TABLE beneficiaries (
 | `fecha_nacimiento` | DATE | NOT NULL | Fecha de nacimiento |
 | `provincia` | TEXT | NOT NULL | Provincia normalizada (sin tildes, ej: `Cordoba`) |
 | `codigo_provincia_indec` | TEXT | NOT NULL | Código INDEC de provincia (2 dígitos, ej: `06`) |
-| `departamento` | TEXT | NOT NULL | Departamento/partido |
-| `codigo_departamento_indec` | TEXT | NOT NULL | Código INDEC de departamento (5 dígitos, ej: `06427`) |
 | `cp` | TEXT | nullable | Código postal |
 
 **Índices recomendados:**
@@ -105,8 +101,7 @@ CREATE TABLE benefits (
     apellido_titular TEXT,
     sexo_titular TEXT,
     fecha_nacimiento_titular DATE,
-    provincia_titular TEXT,
-    departamento_titular TEXT
+    provincia_titular TEXT
 );
 ```
 
@@ -124,7 +119,7 @@ CREATE TABLE benefits (
 | `sexo_titular` | TEXT | nullable | Sexo del TC |
 | `fecha_nacimiento_titular` | DATE | nullable | Fecha de nacimiento del TC |
 | `provincia_titular` | TEXT | nullable | Provincia del TC |
-| `departamento_titular` | TEXT | nullable | Departamento del TC |
+
 
 **Nota sobre TD vs TC:**
 - **TD (Titular de Derecho):** La persona que recibe el beneficio → `beneficiary_id` + datos en `beneficiaries`

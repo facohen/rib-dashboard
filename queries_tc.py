@@ -324,7 +324,7 @@ def get_nominal_tc_list(conn, period, filters, page, page_size):
         /* queries_tc.get_nominal_tc_list — data */
         SELECT n.cuil_titular, n.nombre_titular, n.apellido_titular,
                n.sexo_titular, n.edad_titular,
-               n.provincia_titular, n.departamento_titular,
+               n.provincia_titular,
                n.cant_td, n.cant_beneficios, n.monto_total
         FROM {_NOMINAL} n
         WHERE {where_sql}
@@ -337,7 +337,6 @@ def get_nominal_tc_list(conn, period, filters, page, page_size):
         "nombre": r["nombre_titular"], "apellido": r["apellido_titular"],
         "sexo": r["sexo_titular"], "edad": r["edad_titular"],
         "provincia": r["provincia_titular"],
-        "departamento": r["departamento_titular"],
         "cantTD": r["cant_td"],
         "cantBeneficios": r["cant_beneficios"],
         "montoTotal": float(r["monto_total"]) if r["monto_total"] else 0,
@@ -361,7 +360,7 @@ def get_nominal_tc_detail(conn, cuil_titular, period):
     for cuil_td in cuils_td:
         ben = query_one(conn, """
             SELECT id, cuil, nombre, apellido, sexo, fecha_nacimiento,
-                   provincia, departamento
+                   provincia
             FROM beneficiaries WHERE cuil=%s
         """, (cuil_td,))
         if not ben:
@@ -395,7 +394,6 @@ def get_nominal_tc_detail(conn, cuil_titular, period):
         "nombre": tc["nombre_titular"], "apellido": tc["apellido_titular"],
         "sexo": tc["sexo_titular"], "edad": tc["edad_titular"],
         "provincia": tc["provincia_titular"],
-        "departamento": tc["departamento_titular"],
         "cantTD": tc["cant_td"],
         "cantBeneficios": tc["cant_beneficios"],
         "montoTotal": float(tc["monto_total"]) if tc["monto_total"] else 0,
