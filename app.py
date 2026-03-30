@@ -115,6 +115,21 @@ def nominal():
     conn = get_db()
     periodos = get_periods(conn)
     return render_template("nominal.html",
+                           perspective="td",
+                           periodos=periodos,
+                           default_period=periodos[0] if periodos else "2026-03",
+                           programs=get_programs(conn),
+                           provincias=get_provincias(conn),
+                           role=session.get("role"),
+                           nombre=session.get("nombre"))
+
+@app.route("/dashboard/nominal-tc")
+@admin_required
+def nominal_tc():
+    conn = get_db()
+    periodos = get_periods(conn)
+    return render_template("nominal.html",
+                           perspective="tc",
                            periodos=periodos,
                            default_period=periodos[0] if periodos else "2026-03",
                            programs=get_programs(conn),

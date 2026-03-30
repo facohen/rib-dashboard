@@ -384,8 +384,7 @@ def run(num_beneficiaries=8_000_000):
     print(f"OK ({n:,} rows, {time.time()-t_ben:.0f}s)")
 
     # ── TC (Titular de Cobro) pool + family map ──
-    # AUH (prog 0) and Alimentar (prog 2) have external TCs for minors
-    TC_PROGRAMS = {prog_ids[0], prog_ids[2]}
+    # Minors get an external TC (mother) for ALL their programs
     n_tc = n // 5  # ~20% of beneficiaries get external TCs
     tc_cuil = _cuil_array(n_tc, start=40_000_000)
     tc_nombre = all_nombres_f[rng.integers(0, len(all_nombres_f), size=n_tc)]
@@ -445,11 +444,12 @@ def run(num_beneficiaries=8_000_000):
     pay_cols = ["beneficiary_id","program_id","fecha_pago","periodo_mes","monto_prestacion"]
 
     def _tc_suffix(idx_arr, progs_int, cuils, n_rows):
-        """Build TC CSV suffix for benefit lines: ,cuil_tc,nombre_tc,...,provincia_tc"""
+        """Build TC CSV suffix for benefit lines: ,cuil_tc,nombre_tc,...,provincia_tc
+        If a minor has an assigned TC (mother), she is TC for ALL programs, not just AUH/Alimentar.
+        """
         tc_idx = tc_assignment[idx_arr]
         has_tc = tc_idx >= 0
-        is_tc_prog = np.isin(progs_int, list(TC_PROGRAMS))
-        use_ext = has_tc & is_tc_prog
+        use_ext = has_tc  # TC covers all programs for that minor
         si = tc_idx.clip(0)
         s = np.char.add(",", np.where(use_ext, tc_cuil[si], cuils))
         s = np.char.add(s, ",")

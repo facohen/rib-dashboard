@@ -2,6 +2,7 @@
 name: check-endpoints
 description: Verificar que todos los endpoints de la API funcionan correctamente
 allowed-tools: Bash, Read
+disable-model-invocation: true
 ---
 
 # Check Endpoints

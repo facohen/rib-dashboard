@@ -20,9 +20,12 @@
                     {% endfor %}
                 </select>
             </div>
+            <div class="metric-toggle" id="perspectiveToggle">
+                <button class="metric-btn active" data-perspective="td" onclick="setPerspective('td')">Titular de Derecho</button>
+                <button class="metric-btn" data-perspective="tc" onclick="setPerspective('tc')">Titular de Cobro</button>
+            </div>
             <div class="metric-toggle" id="metricToggle">
-                <button class="metric-btn active" data-metric="personas" onclick="setMetric('personas')">Personas</button>
-                <button class="metric-btn" data-metric="beneficios" onclick="setMetric('beneficios')">Beneficios</button>
+                <button class="metric-btn active" data-metric="beneficios" onclick="setMetric('beneficios')">Beneficios</button>
                 <button class="metric-btn" data-metric="montos" onclick="setMetric('montos')">Montos</button>
             </div>
             <button onclick="toggleTheme()" title="Cambiar Tema"
@@ -40,9 +43,9 @@
     <div class="kpi-grid" id="kpiGrid">
         <div class="kpi-card kpi-success">
             <div class="kpi-icon">👥</div>
-            <div class="kpi-label">Beneficiarios únicos</div>
+            <div class="kpi-label" id="kpi-cobertura-label">Titulares de Derecho</div>
             <div class="kpi-value" id="kpi-cobertura">—</div>
-            <div class="kpi-sub">Activos en el período</div>
+            <div class="kpi-sub" id="kpi-cobertura-sub">Beneficiarios únicos activos</div>
         </div>
         <div class="kpi-card kpi-amber">
             <div class="kpi-icon">💵</div>
@@ -84,8 +87,8 @@
             <div class="chart-wrap"><canvas id="chartSecretaria" height="220"></canvas></div>
         </div>
         <div class="chart-card col-4">
-            <h3>Combinación de Prestaciones</h3>
-            <div class="chart-sub">Total beneficiarios por cantidad de prestaciones percibidas</div>
+            <h3 id="conc-title">Combinación de Prestaciones</h3>
+            <div class="chart-sub" id="conc-sub">Total beneficiarios por cantidad de prestaciones percibidas</div>
             <div class="chart-wrap"><canvas id="chartConcentracion" height="220"></canvas></div>
         </div>
 
@@ -104,7 +107,7 @@
         </div>
         <div class="chart-card col-6">
             <h3>Distribución por Sexo</h3>
-            <div class="chart-sub">Sexo de los beneficiarios</div>
+            <div class="chart-sub" id="sexo-sub">Sexo de los titulares de derecho</div>
             <div class="chart-wrap"><canvas id="chartSexo" height="200"></canvas></div>
         </div>
 
@@ -137,7 +140,40 @@
 
     let period = '{{ default_period }}'
     let charts = {}
-    let globalMetric = 'personas'
+    let globalMetric = 'beneficios'
+    let globalPerspective = 'td'
+
+    window.setPerspective = function(p) {
+        globalPerspective = p
+        document.querySelectorAll('#perspectiveToggle .metric-btn').forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.perspective === p))
+        updatePerspectiveLabels()
+        loadAll()
+    }
+
+    function apiBase() {
+        return globalPerspective === 'tc' ? '/api/tc' : '/api'
+    }
+
+    function updatePerspectiveLabels() {
+        const isTD = globalPerspective === 'td'
+        const lbl = document.getElementById('kpi-cobertura-label')
+        const sub = document.getElementById('kpi-cobertura-sub')
+        const sexoSub = document.getElementById('sexo-sub')
+        const concTitle = document.getElementById('conc-title')
+        const concSub = document.getElementById('conc-sub')
+        if (lbl) lbl.textContent = isTD ? 'Titulares de Derecho' : 'Titulares de Cobro'
+        if (sub) sub.textContent = isTD ? 'Beneficiarios únicos activos' : 'Cobradores únicos activos'
+        if (sexoSub) sexoSub.textContent = isTD
+            ? 'Sexo de los titulares de derecho'
+            : 'Sexo de los titulares de cobro'
+        if (concTitle) concTitle.textContent = isTD
+            ? 'Combinación de Prestaciones'
+            : 'Programas por Titular de Cobro'
+        if (concSub) concSub.textContent = isTD
+            ? 'Total beneficiarios por cantidad de prestaciones percibidas'
+            : 'Distribución de titulares de cobro por cantidad de programas que cobran'
+    }
 
     // ── Cached data for theme re-render ──
     let cachedData = {}
@@ -371,7 +407,10 @@
         document.getElementById('kpi-prom-monto').textContent = fmtAR(d.promedioMontoPorBenef, '$')
         const c = d.concentracion
         const concValues = ['1', '2', '3+']
-        const concLabels = ['1 prestación', '2 prestaciones', '3+ prestaciones']
+        const isTD = globalPerspective === 'td'
+        const concLabels = isTD
+            ? ['1 prestación', '2 prestaciones', '3+ prestaciones']
+            : ['1 programa', '2 programas', '3+ programas']
         const concData = [c.conUna, c.conDos, c.conTresMas]
         const concColors = ['#4a67ff', '#7c3aed', '#10b981']
         const {dlc, dls, tooltipBg, tooltipBorder, chartBorder} = themeColors()
@@ -437,7 +476,7 @@
     }
 
     async function loadSummary() {
-        const r = await fetch(`/api/indicators/summary?${filterQS()}`)
+        const r = await fetch(`${apiBase()}/indicators/summary?${filterQS()}`)
         const d = await r.json()
         cachedData.summary = d
         renderSummary(d)
@@ -509,7 +548,7 @@
     }
 
     async function loadSecretaria() {
-        const r = await fetch(`/api/indicators/by-secretaria?${filterQS('secretaria')}`)
+        const r = await fetch(`${apiBase()}/indicators/by-secretaria?${filterQS('secretaria')}`)
         const d = await r.json()
         cachedData.secretaria = d
         renderSecretaria(d)
@@ -528,7 +567,7 @@
     }
 
     async function loadSexo() {
-        const r = await fetch(`/api/indicators/by-sexo?${filterQS('sexo')}`)
+        const r = await fetch(`${apiBase()}/indicators/by-sexo?${filterQS('sexo')}`)
         const d = await r.json()
         cachedData.sexo = d
         renderSexo(d)
@@ -547,7 +586,7 @@
     }
 
     async function loadEtario() {
-        const r = await fetch(`/api/indicators/by-grupo-etario?${filterQS('grupo_etario')}`)
+        const r = await fetch(`${apiBase()}/indicators/by-grupo-etario?${filterQS('grupo_etario')}`)
         const d = await r.json()
         cachedData.etario = d
         renderEtario(d)
@@ -608,7 +647,7 @@
     }
 
     async function loadPrograma() {
-        const r = await fetch(`/api/indicators/by-programa?${filterQS('programa')}`)
+        const r = await fetch(`${apiBase()}/indicators/by-programa?${filterQS('programa')}`)
         const d = await r.json()
         cachedData.programa = d
         renderPrograma(d)
@@ -626,7 +665,7 @@
     }
 
     async function loadProvincia() {
-        const r = await fetch(`/api/indicators/by-provincia?${filterQS('provincia')}`)
+        const r = await fetch(`${apiBase()}/indicators/by-provincia?${filterQS('provincia')}`)
         const d = await r.json()
         cachedData.provincia = d
         renderProvincia(d)
@@ -658,7 +697,7 @@
             data: {
                 labels,
                 datasets: [{
-                    label: 'Pagos Liquidados',
+                    label: globalPerspective === 'td' ? 'Titulares de Derecho' : 'Titulares de Cobro',
                     data: vals,
                     borderColor: '#4a67ff',
                     backgroundColor: grad,
@@ -695,7 +734,7 @@
     }
 
     async function loadEvolucion() {
-        const r = await fetch(`/api/indicators/evolucion?${filterQS()}`)
+        const r = await fetch(`${apiBase()}/indicators/evolucion?${filterQS()}`)
         const data = await r.json()
         cachedData.evolucion = data
         renderEvolucion(data)
@@ -732,7 +771,7 @@
         if (provinciaDetailCache[key]) return provinciaDetailCache[key]
         let qs = filterQS()
         qs += `&provincia=${encodeURIComponent(provincia)}`
-        const resp = await fetch(`/api/indicators/provincia-detail?${qs}`)
+        const resp = await fetch(`${apiBase()}/indicators/provincia-detail?${qs}`)
         const data = await resp.json()
         provinciaDetailCache[key] = data
         return data

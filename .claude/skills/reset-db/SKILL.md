@@ -3,6 +3,7 @@ name: reset-db
 description: Recrear la base de datos PostgreSQL desde cero y seedear con datos de prueba
 argument-hint: "[--small|--medium|--full]"
 allowed-tools: Bash, Read
+disable-model-invocation: true
 ---
 
 # Reset DB

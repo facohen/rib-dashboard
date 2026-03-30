@@ -5,7 +5,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
-    <title>Dashboard Beneficiarios MCH</title>
+    <title>RIB Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
@@ -736,7 +736,7 @@
     <aside class="sidebar">
         <div class="sidebar-brand">
             <div class="sidebar-logo">S</div>
-            <div class="sidebar-title">Dashboard<small>Beneficiarios MCH</small></div>
+            <div class="sidebar-title">RIB<small>Dashboard</small></div>
         </div>
         <nav class="sidebar-nav">
             <div class="nav-section">Principal</div>
@@ -756,7 +756,15 @@
                     <circle cx="9" cy="7" r="4" />
                     <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
                 </svg>
-                Datos Nominales
+                Nominal TD
+            </a>
+            <a class="nav-item {% block nav_nominal_tc %}{% endblock %}" href="/dashboard/nominal-tc">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+                </svg>
+                Nominal TC
             </a>
             {% endif %}
             <a class="nav-item {% block nav_chatbot %}{% endblock %}" href="/dashboard/chatbot">

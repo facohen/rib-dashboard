@@ -3,6 +3,7 @@ name: seed
 description: Seedear la base de datos PostgreSQL con datos de prueba
 argument-hint: "[--small|--medium|--full]"
 allowed-tools: Bash, Read
+disable-model-invocation: true
 ---
 
 # Seed PostgreSQL

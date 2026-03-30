@@ -1,4 +1,9 @@
 {
+  "model": "sonnet",
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+  },
   "permissions": {
     "allow": [
       "Bash(powershell -Command \"\\(Get-CimInstance Win32_Service -Filter \"\"Name=''postgresql-x64-17''\"\"\\).PathName\")",

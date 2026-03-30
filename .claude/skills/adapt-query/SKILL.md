@@ -3,6 +3,7 @@ name: adapt-query
 description: Adaptar una función de queries_td.py o queries_tc.py al schema real de la DB, manteniendo los contratos JSON
 argument-hint: "<nombre_funcion>"
 allowed-tools: Read, Edit, Bash, Grep
+disable-model-invocation: true
 ---
 
 # Adapt Query

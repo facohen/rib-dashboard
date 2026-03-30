@@ -1,5 +1,10 @@
 {% extends "base.html" %}
+{% set perspective = perspective|default('td') %}
+{% if perspective == 'tc' %}
+{% block nav_nominal_tc %}active{% endblock %}
+{% else %}
 {% block nav_nominal %}active{% endblock %}
+{% endif %}
 
 {% block extra_head %}
 <style>
@@ -430,7 +435,7 @@
 {% block content %}
 <div class="topbar">
     <div class="topbar-row">
-        <div class="topbar-title">Datos Nominales <small>/ Solo administradores</small></div>
+        <div class="topbar-title">Datos Nominales — {{ 'Titulares de Cobro' if perspective == 'tc' else 'Titulares de Derecho' }} <small>/ Solo administradores</small></div>
         <div class="topbar-controls">
             <div class="period-selector">
                 <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -492,6 +497,7 @@
                 <option value="60+">60+ años</option>
             </select>
         </div>
+        {% if perspective != 'tc' %}
         <div class="filter-field">
             <label class="filter-label">Prestaciones</label>
             <select class="filter-select" id="fCantPrest">
@@ -501,6 +507,7 @@
                 <option value="3+">3+</option>
             </select>
         </div>
+        {% endif %}
         <div class="filter-field">
             <label class="filter-label">Estado</label>
             <select class="filter-select" id="fEstado">
@@ -517,7 +524,7 @@
 
     <div class="table-card">
         <div class="table-meta">
-            <span>Total: <strong id="totalCount">—</strong> beneficiarios</span>
+            <span>Total: <strong id="totalCount">—</strong> {{ 'titulares de cobro' if perspective == 'tc' else 'beneficiarios' }}</span>
         </div>
         <div style="overflow-x:auto">
             <table>
@@ -528,7 +535,7 @@
                         <th>Sexo</th>
                         <th>Edad</th>
                         <th>Provincia</th>
-                        <th>Prestaciones</th>
+                        <th>{{ 'TDs asociados' if perspective == 'tc' else 'Prestaciones' }}</th>
                     </tr>
                 </thead>
                 <tbody id="tableBody">
@@ -549,7 +556,7 @@
 <div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
 <div class="drawer" id="drawer">
     <div class="drawer-header">
-        <h3 id="drawerTitle">Detalle del beneficiario</h3>
+        <h3 id="drawerTitle">{{ 'Detalle del titular de cobro' if perspective == 'tc' else 'Detalle del beneficiario' }}</h3>
         <button class="close-btn" onclick="closeDrawer()">✕</button>
     </div>
     <div class="drawer-body" id="drawerBody">Cargando...</div>
@@ -559,6 +566,9 @@
 
 {% block scripts %}
 <script>
+    const PERSPECTIVE = '{{ perspective|default("td") }}'
+    const API_BASE = PERSPECTIVE === 'tc' ? '/api/tc' : '/api'
+    const LIST_PATH = PERSPECTIVE === 'tc' ? '/nominal/titulares' : '/nominal/beneficiaries'
     let period = '{{ default_period }}'
     let currentPage = 1
     const pageSize = 20
@@ -566,23 +576,27 @@
     function changePeriod(p) { period = p; updateExportLink(); loadTable(1) }
 
     function clearFilters() {
-        ['fCuil', 'fProvincia', 'fPrograma', 'fSexo'].forEach(id => document.getElementById(id).value = '')
+        ['fCuil', 'fProvincia', 'fPrograma', 'fSexo', 'fGrupoEtario'].forEach(id => {
+            const el = document.getElementById(id); if (el) el.value = ''
+        })
+        const cp = document.getElementById('fCantPrest'); if (cp) cp.value = ''
         document.getElementById('fEstado').value = 'ACTIVO'
         loadTable(1)
     }
 
     function buildParams(page) {
-        const p = new URLSearchParams({
+        const params = {
             period, page, pageSize,
             cuil: document.getElementById('fCuil').value,
             provincia: document.getElementById('fProvincia').value,
             programa: document.getElementById('fPrograma').value,
             sexo: document.getElementById('fSexo').value,
             grupo_etario: document.getElementById('fGrupoEtario').value,
-            cant_prestaciones: document.getElementById('fCantPrest').value,
             estado: document.getElementById('fEstado').value,
-        })
-        return p.toString()
+        }
+        const cp = document.getElementById('fCantPrest')
+        if (cp) params.cant_prestaciones = cp.value
+        return new URLSearchParams(params).toString()
     }
 
     function updateExportLink() {
@@ -606,7 +620,7 @@
         currentPage = page
         updateExportLink()
         document.getElementById('tableBody').innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted)">Cargando...</td></tr>'
-        const r = await fetch(`/api/nominal/beneficiaries?${buildParams(page)}`)
+        const r = await fetch(`${API_BASE}${LIST_PATH}?${buildParams(page)}`)
         const d = await r.json()
         document.getElementById('totalCount').textContent = fmtFullAR(d.total)
         const totalPages = Math.ceil(d.total / pageSize)
@@ -619,14 +633,16 @@
         if (!items.length) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Sin resultados para los filtros seleccionados</td></tr>'; return }
         tb.innerHTML = items.map(b => {
             const [slabel, sclass] = SEXO_MAP[b.sexo] || ['—', 'tag-ni']
-            const cntClass = b.cantPrestaciones === 1 ? 'tag-1' : b.cantPrestaciones === 2 ? 'tag-2' : 'tag-3'
-            return `<tr onclick="openDrawer(${b.id})">
+            const cnt = PERSPECTIVE === 'tc' ? (b.cantTD || 0) : (b.cantPrestaciones || 0)
+            const cntClass = cnt === 1 ? 'tag-1' : cnt === 2 ? 'tag-2' : 'tag-3'
+            const rowId = PERSPECTIVE === 'tc' ? `'${sanitize(b.cuil)}'` : b.id
+            return `<tr onclick="openDrawer(${rowId})">
       <td><code style="font-size:12px;color:var(--muted)">${sanitize(b.cuil)}</code></td>
       <td><strong>${sanitize(b.apellido)}</strong>, ${sanitize(b.nombre)}</td>
       <td><span class="tag ${sclass}">${slabel}</span></td>
       <td>${b.edad ?? '—'}</td>
       <td>${sanitize(b.provincia)}</td>
-      <td><span class="tag ${cntClass}">${b.cantPrestaciones}</span></td>
+      <td><span class="tag ${cntClass}">${cnt}</span></td>
     </tr>`
         }).join('')
     }
@@ -650,7 +666,10 @@
         document.getElementById('drawerOverlay').classList.add('open')
         document.getElementById('drawer').classList.add('open')
         document.getElementById('drawerBody').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Cargando...</div>'
-        const r = await fetch(`/api/nominal/beneficiaries/${id}?period=${period}`)
+        const detailPath = PERSPECTIVE === 'tc'
+            ? `${API_BASE}/nominal/titulares/${encodeURIComponent(id)}?period=${period}`
+            : `${API_BASE}/nominal/beneficiaries/${id}?period=${period}`
+        const r = await fetch(detailPath)
         if (!r.ok) {
             document.getElementById('drawerTitle').textContent = 'Error'
             document.getElementById('drawerBody').innerHTML = '<div style="text-align:center;padding:40px;color:var(--red)">No se pudo cargar el detalle</div>'
@@ -658,7 +677,15 @@
         }
         const b = await r.json()
         document.getElementById('drawerTitle').textContent = `${b.apellido}, ${b.nombre}`
-        const montoTotal = b.pagos.reduce((s, p) => s + p.monto_prestacion, 0)
+        if (PERSPECTIVE === 'tc') {
+            renderDrawerTC(b)
+        } else {
+            renderDrawerTD(b)
+        }
+    }
+
+    function renderDrawerTD(b) {
+        const montoTotal = (b.pagos || []).reduce((s, p) => s + p.monto_prestacion, 0)
         document.getElementById('drawerBody').innerHTML = `
     <div class="info-grid">
       <div class="info-item"><div class="lbl">CUIL</div><div class="val" style="font-family:monospace">${sanitize(b.cuil)}</div></div>
@@ -670,13 +697,13 @@
       <div class="info-item"><div class="lbl">Monto período</div><div class="val" style="color:var(--green)">$${fmtFullAR(montoTotal, 2)}</div></div>
     </div>
     <div class="section-sep">Prestaciones activas en ${period}</div>
-    ${b.prestaciones.map(p => `
+    ${(b.prestaciones || []).map(p => `
       <div class="prestacion-item">
         <div><div class="prg">${sanitize(p.nombre_programa)}</div><div class="sec">${sanitize(p.secretaria_origen.replace('Secretaría de ', ''))}</div></div>
         <span class="${p.estado_beneficio === 'ACTIVO' ? 'estado-activo' : 'estado-inactivo'}">${sanitize(p.estado_beneficio)}</span>
       </div>`).join('') || '<div style="color:var(--muted);font-size:13px">Sin prestaciones para este período</div>'}
     <div class="section-sep">Pagos realizados en ${period}</div>
-    ${b.pagos.map(p => `
+    ${(b.pagos || []).map(p => `
       <div class="pago-item">
         <div>
           <div class="prg">${sanitize(p.nombre_programa)}</div>
@@ -684,6 +711,36 @@
         </div>
         <div class="monto">$${fmtFullAR(p.monto_prestacion, 2)}</div>
       </div>`).join('') || '<div style="color:var(--muted);font-size:13px">Sin pagos para este período</div>'}
+  `
+    }
+
+    function renderDrawerTC(b) {
+        const tds = b.titulares_derecho || []
+        document.getElementById('drawerBody').innerHTML = `
+    <div class="info-grid">
+      <div class="info-item"><div class="lbl">CUIL</div><div class="val" style="font-family:monospace">${sanitize(b.cuil)}</div></div>
+      <div class="info-item"><div class="lbl">Sexo</div><div class="val">${sexoLabel(b.sexo)}</div></div>
+      <div class="info-item"><div class="lbl">Edad</div><div class="val">${b.edad ?? '—'} años</div></div>
+      <div class="info-item"><div class="lbl">Provincia</div><div class="val">${sanitize(b.provincia)}</div></div>
+      <div class="info-item"><div class="lbl">TDs asociados</div><div class="val">${b.cantTD || 0}</div></div>
+      <div class="info-item"><div class="lbl">Beneficios</div><div class="val">${b.cantBeneficios || 0}</div></div>
+      <div class="info-item"><div class="lbl">Monto total</div><div class="val" style="color:var(--green)">$${fmtFullAR(b.montoTotal, 2)}</div></div>
+    </div>
+    <div class="section-sep">Titulares de Derecho asociados (${tds.length})</div>
+    ${tds.map(td => `
+      <div class="prestacion-item" style="flex-direction:column;align-items:stretch;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div class="prg">${sanitize(td.apellido || '')}, ${sanitize(td.nombre || '')}</div>
+            <div class="sec">CUIL: ${sanitize(td.cuil || '—')} · Edad: ${td.edad ?? '—'} · ${sexoLabel(td.sexo)}</div>
+          </div>
+        </div>
+        ${(td.prestaciones || []).map(p => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 0 12px">
+            <span style="font-size:12px">${sanitize(p.nombre_programa)}</span>
+            <span class="${p.estado_beneficio === 'ACTIVO' ? 'estado-activo' : 'estado-inactivo'}" style="font-size:10px">${sanitize(p.estado_beneficio)}</span>
+          </div>`).join('')}
+      </div>`).join('') || '<div style="color:var(--muted);font-size:13px">Sin titulares de derecho asociados</div>'}
   `
     }
 
