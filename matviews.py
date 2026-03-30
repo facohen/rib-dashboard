@@ -11,6 +11,10 @@ Uso:
 import os
 import sys
 import time
+
+if sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 import psycopg2
 
 from config import load_dotenv
@@ -336,7 +340,8 @@ def _process_all_periods(cur, conn, cross_table="mv_cross", resumen_table="mv_re
         total_cross_tc += ctc
         total_resumen_tc += rtc
         total_nominal_tc += ntc
-        bar = "█" * int(i / len(periods) * 30) + "░" * (30 - int(i / len(periods) * 30))
+        done = int(i / len(periods) * 30)
+        bar = "#" * done + "." * (30 - done)
         print(f"  {bar} {i}/{len(periods)} | {p} | cross:{cr:>7,} res:{rr:>6,} nom:{nr:>9,} tc:{ctc:>7,} | {time.time()-t_p:.1f}s")
 
     print(f"\n  {cross_table}: {total_cross:,} rows")

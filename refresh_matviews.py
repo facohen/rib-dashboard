@@ -12,6 +12,10 @@ y limpia el cache de Flask si hay un servidor corriendo.
 import os
 import sys
 import time
+
+if sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 import psycopg2
 import requests
 
@@ -49,9 +53,9 @@ def run():
     print(f"\nPeríodos encontrados: {len(periods)}")
 
     # Step 1: Create empty UNLOGGED shadow tables
-    print(f"\n{'─' * 60}")
+    print(f"\n{'-' * 60}")
     print("Creando shadow tables...")
-    print(f"{'─' * 60}")
+    print(f"{'-' * 60}")
     for name, create_ddl, _, _ in TABLES:
         shadow = f"{name}_new"
         cur.execute(f"DROP TABLE IF EXISTS {shadow}")
@@ -61,9 +65,9 @@ def run():
     conn.commit()
 
     # Step 2: Process periods — shared temp table feeds both shadow MVs
-    print(f"\n{'─' * 60}")
+    print(f"\n{'-' * 60}")
     print("Procesando periodos (temp table compartida → shadow tables)")
-    print(f"{'─' * 60}")
+    print(f"{'-' * 60}")
 
     total_cross = 0
     total_resumen = 0
@@ -86,9 +90,9 @@ def run():
         total_resumen_tc += resumen_tc
         total_nominal_tc += nominal_tc
         elapsed_p = time.time() - t_p
-        bar = "█" * int(i / len(periods) * 30)
-        bar += "░" * (30 - len(bar))
-        print(f"  {bar} {i}/{len(periods)} │ {p} │ cross:{cross_rows:>7,} res:{resumen_rows:>6,} tc:{cross_tc:>7,} │ {elapsed_p:>5.1f}s")
+        done = int(i / len(periods) * 30)
+        bar = "#" * done + "." * (30 - done)
+        print(f"  [{bar}] {i}/{len(periods)} | {p} | cross:{cross_rows:>7,} res:{resumen_rows:>6,} tc:{cross_tc:>7,} | {elapsed_p:>5.1f}s")
 
     print(f"\n  mv_cross_new: {total_cross:,} rows total")
     print(f"  mv_resumen_new: {total_resumen:,} rows total")
@@ -113,7 +117,7 @@ def run():
         conn.commit()
 
     # Step 3: Atomic swap (~1ms, single transaction)
-    print(f"\n{'─' * 60}")
+    print(f"\n{'-' * 60}")
     print("Swap atómico...", end=" ", flush=True)
     t_swap = time.time()
     swap_sql = ""
@@ -142,9 +146,9 @@ def run():
     print("OK")
 
     # ANALYZE
-    print(f"{'─' * 60}")
+    print(f"{'-' * 60}")
     print("ANALYZE")
-    print(f"{'─' * 60}")
+    print(f"{'-' * 60}")
     analyze_tables = [t[0] for t in TABLES] + ["periods", "provincias_lookup"]
     conn.autocommit = True
     for name in analyze_tables:
@@ -153,9 +157,9 @@ def run():
         print("OK")
 
     # Row counts
-    print(f"\n{'─' * 60}")
+    print(f"\n{'-' * 60}")
     print("Resultado")
-    print(f"{'─' * 60}")
+    print(f"{'-' * 60}")
     for name in analyze_tables:
         cur.execute(f"SELECT COUNT(*) FROM {name}")
         cnt = cur.fetchone()[0]

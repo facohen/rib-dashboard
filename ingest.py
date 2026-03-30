@@ -21,6 +21,8 @@ import io
 import os
 import re
 import sys
+if sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
 import glob
 import time
 import inspect
@@ -1141,7 +1143,7 @@ def _create_matviews(conn):
     proc = subprocess.Popen(
         [sys.executable, "-u", "create_matviews.py"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
+        text=True, bufsize=1, encoding="utf-8",
         env={**os.environ, "DATABASE_URL": DATABASE_URL},
     )
     for line in proc.stdout:
@@ -1164,7 +1166,7 @@ def _refresh_matviews(conn):
     proc = subprocess.Popen(
         [sys.executable, "-u", "refresh_matviews.py"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
+        text=True, bufsize=1, encoding="utf-8",
         env={**os.environ, "DATABASE_URL": DATABASE_URL},
     )
     for line in proc.stdout:
@@ -1511,7 +1513,7 @@ def _check_consistency(conn):
         skip(f"Cobertura de periodos: {e}"); conn.rollback()
 
     # ── Parte 2: MVs ↔ API endpoints (Flask test client, sin server externo) ──
-    print("\n  ── MVs ↔ API ──")
+    print("\n  -- MVs vs API --")
     try:
         from app import app as flask_app
         flask_app.config["TESTING"] = True
@@ -1693,7 +1695,7 @@ def menu():
         print(f"    [7] Ver estado de tablas materializadas")
         print(f"    [8] Limpiar índices redundantes (Step 0)")
         print(f"  Verificación:")
-        print(f"    [C] Check consistencia DB ↔ MVs ↔ API")
+        print(f"    [C] Check consistencia DB <-> MVs <-> API")
         print(f"  Servicios:")
         print(f"    [S] Servir dashboard (Flask dev)")
         print(f"    [0] Salir")

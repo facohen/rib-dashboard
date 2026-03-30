@@ -346,7 +346,7 @@ def _nominal_from_raw(conn, period, filters, page, page_size, offset):
                COALESCE(ben.nombre, 'No identificado') AS nombre,
                COALESCE(ben.apellido, 'No identificado') AS apellido,
                COALESCE(ben.sexo, 'NI') AS sexo,
-               CASE WHEN ben.id IS NOT NULL
+               CASE WHEN ben.fecha_nacimiento IS NOT NULL
                     THEN EXTRACT(YEAR FROM AGE(%s::date, ben.fecha_nacimiento))::int
                     ELSE NULL END AS edad,
                COALESCE(ben.provincia, 'Sin dato') AS provincia,

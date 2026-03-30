@@ -14,6 +14,11 @@ Uso:
 import os
 import sys
 import time
+
+# Force UTF-8 stdout on Windows (avoids cp1252 encoding errors)
+if sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 import psycopg2
 
 from config import load_dotenv
@@ -429,9 +434,9 @@ def run():
     print(f"\nPeríodos encontrados: {len(periods)}")
 
     # Process all periods — shared temp table feeds both MVs
-    print(f"\n{'─' * 60}")
+    print(f"\n{'-' * 60}")
     print("Procesando periodos (temp table compartida → mv_cross + mv_resumen)")
-    print(f"{'─' * 60}")
+    print(f"{'-' * 60}")
 
     total_cross = 0
     total_resumen = 0
@@ -452,9 +457,9 @@ def run():
         total_resumen_tc += resumen_tc
         total_nominal_tc += nominal_tc
         elapsed_p = time.time() - t_p
-        bar = "█" * int(i / len(periods) * 30)
-        bar += "░" * (30 - len(bar))
-        print(f"  {bar} {i}/{len(periods)} │ {p} │ cross:{cross_rows:>7,} res:{resumen_rows:>6,} tc:{cross_tc:>7,} │ {elapsed_p:>5.1f}s")
+        done = int(i / len(periods) * 30)
+        bar = "#" * done + "." * (30 - done)
+        print(f"  [{bar}] {i}/{len(periods)} | {p} | cross:{cross_rows:>7,} res:{resumen_rows:>6,} tc:{cross_tc:>7,} | {elapsed_p:>5.1f}s")
 
     print(f"\n  mv_cross: {total_cross:,} rows total")
     print(f"  mv_resumen: {total_resumen:,} rows total")
@@ -478,9 +483,9 @@ def run():
         conn.commit()
 
     # Create lookup tables
-    print(f"\n{'─' * 60}")
+    print(f"\n{'-' * 60}")
     print("Tablas lookup")
-    print(f"{'─' * 60}")
+    print(f"{'-' * 60}")
     print("  periods...", end=" ", flush=True)
     cur.execute(PERIODS_TABLE)
     conn.commit()
@@ -492,9 +497,9 @@ def run():
     print("OK")
 
     # ANALYZE tables
-    print(f"\n{'─' * 60}")
+    print(f"\n{'-' * 60}")
     print("ANALYZE")
-    print(f"{'─' * 60}")
+    print(f"{'-' * 60}")
     conn.autocommit = True
     for name, _, _, _ in TABLES:
         print(f"  {name}...", end=" ", flush=True)

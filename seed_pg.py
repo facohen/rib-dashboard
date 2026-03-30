@@ -15,6 +15,9 @@ import os
 import sys
 import time
 
+if sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+
 import numpy as np
 import psycopg2
 from werkzeug.security import generate_password_hash
