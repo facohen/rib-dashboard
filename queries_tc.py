@@ -276,6 +276,8 @@ def get_nominal_tc_list(conn, period, filters, page, page_size):
     programa_id = filters.get("programa", "")
     estado = filters.get("estado", "ACTIVO")
     grupo_etario = filters.get("grupo_etario", "")
+    cant_td_filter = filters.get("cant_td", "")
+    cant_beneficios_filter = filters.get("cant_beneficios", "")
 
     where = ["n.periodo_mes=%s"]
     params = [period]
@@ -293,6 +295,17 @@ def get_nominal_tc_list(conn, period, filters, page, page_size):
             where.append("n.edad_titular >= %s AND n.edad_titular <= %s")
             params.extend([int(parts[0]), int(parts[1])])
 
+    if cant_td_filter:
+        if cant_td_filter == "3+":
+            where.append("n.cant_td >= 3")
+        else:
+            where.append("n.cant_td = %s"); params.append(int(cant_td_filter))
+    if cant_beneficios_filter:
+        if cant_beneficios_filter == "3+":
+            where.append("n.cant_beneficios >= 3")
+        else:
+            where.append("n.cant_beneficios = %s"); params.append(int(cant_beneficios_filter))
+
     if programa_id and estado == "ACTIVO":
         where.append("n.active_program_ids @> ARRAY[%s]::int[]"); params.append(int(programa_id))
     elif programa_id and estado == "INACTIVO":
@@ -307,7 +320,7 @@ def get_nominal_tc_list(conn, period, filters, page, page_size):
 
     where_sql = " AND ".join(where)
 
-    has_user_filters = any([provincia, sexo, cuil, grupo_etario, programa_id])
+    has_user_filters = any([provincia, sexo, cuil, grupo_etario, programa_id, cant_td_filter, cant_beneficios_filter])
     if has_user_filters:
         count_row = query_one(conn, f"""
             /* queries_tc.get_nominal_tc_list — count */
@@ -315,9 +328,16 @@ def get_nominal_tc_list(conn, period, filters, page, page_size):
         """, params)
         total = int(count_row["total"]) if count_row else 0
     else:
+        count_where = ["n.periodo_mes=%s"]
+        count_params = [period]
+        if estado == "ACTIVO":
+            count_where.append("array_length(n.active_program_ids, 1) > 0")
+        elif estado == "INACTIVO":
+            count_where.append("array_length(n.program_ids, 1) > array_length(COALESCE(n.active_program_ids, '{}'), 1)")
         count_row = query_one(conn, f"""
-            SELECT SUM(personas) AS total FROM {_RESUMEN} WHERE periodo_mes = %s
-        """, [period])
+            /* queries_tc.get_nominal_tc_list — count */
+            SELECT COUNT(*) AS total FROM {_NOMINAL} n WHERE {' AND '.join(count_where)}
+        """, count_params)
         total = int(count_row["total"]) if count_row else 0
 
     rows = query(conn, f"""

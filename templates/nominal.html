@@ -508,6 +508,26 @@
             </select>
         </div>
         {% endif %}
+        {% if perspective == 'tc' %}
+        <div class="filter-field">
+            <label class="filter-label">Titulares Derecho</label>
+            <select class="filter-select" id="fCantTD">
+                <option value="">Todos</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3+">3+</option>
+            </select>
+        </div>
+        <div class="filter-field">
+            <label class="filter-label">Beneficios</label>
+            <select class="filter-select" id="fCantBeneficios">
+                <option value="">Todos</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3+">3+</option>
+            </select>
+        </div>
+        {% endif %}
         <div class="filter-field">
             <label class="filter-label">Estado</label>
             <select class="filter-select" id="fEstado">
@@ -535,7 +555,12 @@
                         <th>Sexo</th>
                         <th>Edad</th>
                         <th>Provincia</th>
-                        <th>{{ 'TDs asociados' if perspective == 'tc' else 'Prestaciones' }}</th>
+                        {% if perspective == 'tc' %}
+                        <th>Titulares Derecho</th>
+                        <th>Beneficios</th>
+                        {% else %}
+                        <th>Prestaciones</th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody id="tableBody">
@@ -580,6 +605,8 @@
             const el = document.getElementById(id); if (el) el.value = ''
         })
         const cp = document.getElementById('fCantPrest'); if (cp) cp.value = ''
+        const ctd = document.getElementById('fCantTD'); if (ctd) ctd.value = ''
+        const cb = document.getElementById('fCantBeneficios'); if (cb) cb.value = ''
         document.getElementById('fEstado').value = 'ACTIVO'
         loadTable(1)
     }
@@ -596,6 +623,12 @@
         }
         const cp = document.getElementById('fCantPrest')
         if (cp) params.cant_prestaciones = cp.value
+        if (PERSPECTIVE === 'tc') {
+            const ctd = document.getElementById('fCantTD')
+            if (ctd) params.cant_td = ctd.value
+            const cb = document.getElementById('fCantBeneficios')
+            if (cb) params.cant_beneficios = cb.value
+        }
         return new URLSearchParams(params).toString()
     }
 
@@ -630,11 +663,15 @@
 
     function renderTable(items) {
         const tb = document.getElementById('tableBody')
-        if (!items.length) { tb.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--muted)">Sin resultados para los filtros seleccionados</td></tr>'; return }
+        if (!items.length) { tb.innerHTML = `<tr><td colspan="${PERSPECTIVE === 'tc' ? 7 : 6}" style="text-align:center;padding:40px;color:var(--muted)">Sin resultados para los filtros seleccionados</td></tr>`; return }
         tb.innerHTML = items.map(b => {
             const [slabel, sclass] = SEXO_MAP[b.sexo] || ['—', 'tag-ni']
-            const cnt = PERSPECTIVE === 'tc' ? (b.cantTD || 0) : (b.cantPrestaciones || 0)
-            const cntClass = cnt === 1 ? 'tag-1' : cnt === 2 ? 'tag-2' : 'tag-3'
+            const cntTD = b.cantTD || 0
+            const cntBen = b.cantBeneficios || 0
+            const cntPrest = b.cantPrestaciones || 0
+            const cntClass = cntTD === 1 ? 'tag-1' : cntTD === 2 ? 'tag-2' : 'tag-3'
+            const cntBenClass = cntBen === 1 ? 'tag-1' : cntBen === 2 ? 'tag-2' : 'tag-3'
+            const cntPrestClass = cntPrest === 1 ? 'tag-1' : cntPrest === 2 ? 'tag-2' : 'tag-3'
             const rowId = PERSPECTIVE === 'tc' ? `'${sanitize(b.cuil)}'` : b.id
             return `<tr onclick="openDrawer(${rowId})">
       <td><code style="font-size:12px;color:var(--muted)">${sanitize(b.cuil)}</code></td>
@@ -642,7 +679,9 @@
       <td><span class="tag ${sclass}">${slabel}</span></td>
       <td>${b.edad ?? '—'}</td>
       <td>${sanitize(b.provincia)}</td>
-      <td><span class="tag ${cntClass}">${cnt}</span></td>
+      ${PERSPECTIVE === 'tc'
+          ? `<td><span class="tag ${cntClass}">${cntTD}</span></td><td><span class="tag ${cntBenClass}">${cntBen}</span></td>`
+          : `<td><span class="tag ${cntPrestClass}">${cntPrest}</span></td>`}
     </tr>`
         }).join('')
     }
@@ -722,7 +761,7 @@
       <div class="info-item"><div class="lbl">Sexo</div><div class="val">${sexoLabel(b.sexo)}</div></div>
       <div class="info-item"><div class="lbl">Edad</div><div class="val">${b.edad ?? '—'} años</div></div>
       <div class="info-item"><div class="lbl">Provincia</div><div class="val">${sanitize(b.provincia)}</div></div>
-      <div class="info-item"><div class="lbl">TDs asociados</div><div class="val">${b.cantTD || 0}</div></div>
+      <div class="info-item"><div class="lbl">Titulares Derecho</div><div class="val">${b.cantTD || 0}</div></div>
       <div class="info-item"><div class="lbl">Beneficios</div><div class="val">${b.cantBeneficios || 0}</div></div>
       <div class="info-item"><div class="lbl">Monto total</div><div class="val" style="color:var(--green)">$${fmtFullAR(b.montoTotal, 2)}</div></div>
     </div>

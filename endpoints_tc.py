@@ -96,7 +96,7 @@ def tc_api_provincia_detail():
 def tc_api_nominal_list():
     period = request.args.get("period", "2026-03")
     filters = {k: request.args.get(k, "").strip() if k != "estado" else request.args.get(k, "ACTIVO")
-               for k in ("cuil", "provincia", "programa", "sexo", "grupo_etario", "estado")}
+               for k in ("cuil", "provincia", "programa", "sexo", "grupo_etario", "estado", "cant_td", "cant_beneficios")}
     page = int(request.args.get("page", 1))
     page_size = int(request.args.get("pageSize", 20))
     return jsonify(queries_tc.get_nominal_tc_list(_get_db(), period, filters, page, page_size))
