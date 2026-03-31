@@ -76,6 +76,23 @@ def get_summary_tc(conn, period, filters=None):
         elif cp == "3+":
             con3 = t
 
+    td_rows = query(conn, f"""
+        /* queries_tc.get_summary_tc — distribucionTD */
+        SELECT
+            CASE WHEN cant_td >= 3 THEN '3+' ELSE cant_td::text END AS bucket,
+            COUNT(*) AS total
+        FROM {_NOMINAL}
+        WHERE periodo_mes = %s AND array_length(active_program_ids, 1) > 0
+        GROUP BY bucket
+    """, [period])
+    td1 = td2 = td3 = 0
+    for r in td_rows:
+        b = r["bucket"]
+        t = int(r["total"] or 0)
+        if b == "1":    td1 = t
+        elif b == "2":  td2 = t
+        elif b == "3+": td3 = t
+
     prom_prest = round(total_prest / total_benef, 2) if total_benef else 0
     prom_monto = round(monto_total / total_benef) if total_benef else 0
 
@@ -90,6 +107,7 @@ def get_summary_tc(conn, period, filters=None):
         "casosIncompatibilidad": 0,
         "cantidadProgramas": cant_programas,
         "concentracion": {"conUna": con1, "conDos": con2, "conTresMas": con3},
+        "distribucionTD": {"conUna": td1, "conDos": td2, "conTresMas": td3},
     }
 
 

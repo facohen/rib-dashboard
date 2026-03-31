@@ -87,9 +87,16 @@
             <div class="chart-wrap"><canvas id="chartSecretaria" height="220"></canvas></div>
         </div>
         <div class="chart-card col-4">
-            <h3 id="conc-title">Combinación de Prestaciones</h3>
-            <div class="chart-sub" id="conc-sub">Total beneficiarios por cantidad de prestaciones percibidas</div>
-            <div class="chart-wrap"><canvas id="chartConcentracion" height="220"></canvas></div>
+            <div id="conc-td-view">
+                <h3>Combinación de Prestaciones</h3>
+                <div class="chart-sub">Total beneficiarios por cantidad de prestaciones percibidas</div>
+                <div class="chart-wrap"><canvas id="chartConcentracion" height="220"></canvas></div>
+            </div>
+            <div id="conc-tc-view" style="display:none">
+                <h3>Titulares Derecho por TC</h3>
+                <div class="chart-sub">Distribución de titulares de cobro por cantidad de TDs que representan</div>
+                <div class="chart-wrap"><canvas id="chartDistribucionTC" height="220"></canvas></div>
+            </div>
         </div>
 
         <!-- Row 2: Evolutivo -->
@@ -160,19 +167,15 @@
         const lbl = document.getElementById('kpi-cobertura-label')
         const sub = document.getElementById('kpi-cobertura-sub')
         const sexoSub = document.getElementById('sexo-sub')
-        const concTitle = document.getElementById('conc-title')
-        const concSub = document.getElementById('conc-sub')
+        const concTdView = document.getElementById('conc-td-view')
+        const concTcView = document.getElementById('conc-tc-view')
         if (lbl) lbl.textContent = isTD ? 'Titulares de Derecho' : 'Titulares de Cobro'
         if (sub) sub.textContent = isTD ? 'Beneficiarios únicos activos' : 'Cobradores únicos activos'
         if (sexoSub) sexoSub.textContent = isTD
             ? 'Sexo de los titulares de derecho'
             : 'Sexo de los titulares de cobro'
-        if (concTitle) concTitle.textContent = isTD
-            ? 'Combinación de Prestaciones'
-            : 'Programas por Titular de Cobro'
-        if (concSub) concSub.textContent = isTD
-            ? 'Total beneficiarios por cantidad de prestaciones percibidas'
-            : 'Distribución de titulares de cobro por cantidad de programas que cobran'
+        if (concTdView) concTdView.style.display = isTD ? '' : 'none'
+        if (concTcView) concTcView.style.display = isTD ? 'none' : ''
     }
 
     // ── Cached data for theme re-render ──
@@ -399,76 +402,91 @@
         })
     }
 
+    function sharedDonutOptions(dlc, dls, tooltipBg, tooltipBorder) {
+        return {
+            responsive: true, maintainAspectRatio: false,
+            layout: { padding: { top: 5, left: 5, right: 5, bottom: 5 } },
+            plugins: {
+                legend: {
+                    position: 'left',
+                    align: 'start',
+                    labels: { color: dlc, font: { size: 10, family: 'Inter' }, padding: 8, boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: 'circle' }
+                },
+                tooltip: {
+                    backgroundColor: tooltipBg, borderColor: tooltipBorder, borderWidth: 1,
+                    titleColor: '#e4e6f0', bodyColor: 'rgba(255,255,255,0.7)',
+                    callbacks: {
+                        label: ctx => {
+                            const sum = ctx.chart.data.datasets[0].data.reduce((a, b) => a + Number(b), 0)
+                            const pct = ((ctx.raw * 100) / sum).toFixed(1) + '%'
+                            return ` ${ctx.label}: ${fmtFullAR(ctx.raw)} (${pct})`
+                        }
+                    }
+                },
+                datalabels: {
+                    color: dlc,
+                    font: { weight: 'bold', size: 11 },
+                    anchor: 'end',
+                    align: 'end',
+                    offset: 6,
+                    textAlign: 'center',
+                    textShadowBlur: 4,
+                    textShadowColor: dls,
+                    formatter: (value, context) => {
+                        if (value <= 0) return ''
+                        const sum = context.chart.data.datasets[0].data.reduce((a, b) => a + Number(b), 0)
+                        const pct = ((value * 100) / sum).toFixed(1) + '%'
+                        return pct + '\n' + fmtAR(value)
+                    }
+                }
+            }
+        }
+    }
+
     function renderSummary(d) {
         document.getElementById('kpi-cobertura').textContent = fmtAR(d.cobertura)
         document.getElementById('kpi-monto-total').textContent = fmtAR(d.montoTotal, '$')
         document.getElementById('kpi-prestaciones-activas').textContent = fmtAR(d.prestacionesActivas)
         document.getElementById('kpi-prom-prest').textContent = d.promedioPrestaciones.toFixed(2)
         document.getElementById('kpi-prom-monto').textContent = fmtAR(d.promedioMontoPorBenef, '$')
-        const c = d.concentracion
-        const concValues = ['1', '2', '3+']
-        const isTD = globalPerspective === 'td'
-        const concLabels = isTD
-            ? ['1 prestación', '2 prestaciones', '3+ prestaciones']
-            : ['1 programa', '2 programas', '3+ programas']
-        const concData = [c.conUna, c.conDos, c.conTresMas]
         const concColors = ['#4a67ff', '#7c3aed', '#10b981']
         const {dlc, dls, tooltipBg, tooltipBorder, chartBorder} = themeColors()
+
+        // TD donut
+        const cTD = d.concentracion
         const ctxConc = document.getElementById('chartConcentracion')
         if (ctxConc) {
             if (charts['chartConcentracion']) charts['chartConcentracion'].destroy()
             charts['chartConcentracion'] = new Chart(ctxConc, {
                 type: 'doughnut',
                 data: {
-                    labels: concLabels,
-                    datasets: [{
-                        data: concData,
-                        backgroundColor: concColors,
-                        borderColor: chartBorder,
-                        borderWidth: 2,
-                        hoverOffset: 8,
-                    }]
+                    labels: ['1 prestación', '2 prestaciones', '3+ prestaciones'],
+                    datasets: [{ data: [cTD.conUna, cTD.conDos, cTD.conTresMas], backgroundColor: concColors, borderColor: chartBorder, borderWidth: 2, hoverOffset: 8 }]
                 },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    layout: { padding: { top: 5, left: 5, right: 5, bottom: 5 } },
-                    plugins: {
-                        legend: {
-                            position: 'left',
-                            align: 'start',
-                            labels: { color: dlc, font: { size: 10, family: 'Inter' }, padding: 8, boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: 'circle' }
-                        },
-                        tooltip: {
-                            backgroundColor: tooltipBg, borderColor: tooltipBorder, borderWidth: 1,
-                            titleColor: '#e4e6f0', bodyColor: 'rgba(255,255,255,0.7)',
-                            callbacks: {
-                                label: ctx => {
-                                    const sum = ctx.chart.data.datasets[0].data.reduce((a, b) => a + Number(b), 0)
-                                    const pct = ((ctx.raw * 100) / sum).toFixed(1) + '%'
-                                    return ` ${ctx.label}: ${fmtFullAR(ctx.raw)} (${pct})`
-                                }
-                            }
-                        },
-                        datalabels: {
-                            color: dlc,
-                            font: { weight: 'bold', size: 11 },
-                            anchor: 'end',
-                            align: 'end',
-                            offset: 6,
-                            textAlign: 'center',
-                            textShadowBlur: 4,
-                            textShadowColor: dls,
-                            formatter: (value, context) => {
-                                if (value <= 0) return ''
-                                const sum = context.chart.data.datasets[0].data.reduce((a, b) => a + Number(b), 0)
-                                const pct = ((value * 100) / sum).toFixed(1) + '%'
-                                return pct + '\n' + fmtAR(value)
-                            }
-                        }
-                    },
+                options: { ...sharedDonutOptions(dlc, dls, tooltipBg, tooltipBorder),
                     onClick: (evt, elements) => {
                         if (!elements.length) return
-                        setFilter('cant_prestaciones', concValues[elements[0].index])
+                        setFilter('cant_prestaciones', ['1', '2', '3+'][elements[0].index])
+                    }
+                }
+            })
+        }
+
+        // TC donut
+        const cTC = d.distribucionTD || { conUna: 0, conDos: 0, conTresMas: 0 }
+        const ctxTC = document.getElementById('chartDistribucionTC')
+        if (ctxTC) {
+            if (charts['chartDistribucionTC']) charts['chartDistribucionTC'].destroy()
+            charts['chartDistribucionTC'] = new Chart(ctxTC, {
+                type: 'doughnut',
+                data: {
+                    labels: ['1 TD', '2 TDs', '3+ TDs'],
+                    datasets: [{ data: [cTC.conUna, cTC.conDos, cTC.conTresMas], backgroundColor: concColors, borderColor: chartBorder, borderWidth: 2, hoverOffset: 8 }]
+                },
+                options: { ...sharedDonutOptions(dlc, dls, tooltipBg, tooltipBorder),
+                    onClick: (evt, elements) => {
+                        if (!elements.length) return
+                        setFilter('cant_prestaciones', ['1', '2', '3+'][elements[0].index])
                     }
                 }
             })

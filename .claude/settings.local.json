@@ -2,7 +2,7 @@
   "model": "sonnet",
   "env": {
     "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
-    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "95"
   },
   "permissions": {
     "allow": [
